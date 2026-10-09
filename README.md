@@ -88,6 +88,20 @@ Nếu Jev trả `BLOCKED` trước khi thao tác dù còn nút tương tác, Lum
 
 Khi xảy ra lỗi, ở Agent Jev hãy mở **Chẩn đoán DOM: Jev đang nhìn thấy gì?** → **Sao chép chẩn đoán**, sau đó kiểm tra provider, model và các nhãn phần tử mà extension đọc được.
 
+## Jev speed diagnostics
+
+The Jev agent now reports a timing breakdown in **Agent Jev → Hiệu năng**: total elapsed time, decision API time, DOM observation, text-helper time, browser-action time, wait time, request payload size, and number of decision calls. Use **Sao chép chẩn đoán** to share those counters without sharing provider credentials. The displayed values are measured on your own Chrome installation.
+
+For faster interactive control, a Jev run now limits each decision request (including retry) to **12 seconds**, retries at most **once** after **250 ms**, and cancels pending network requests when you stop the agent. This prevents indefinite hangs but cannot speed up an overloaded provider. Standard direct provider calls outside agent mode retain the previous retry settings.
+
+The default Step Delay for new installations is now 75 ms (previously 300 ms). For an existing installation, open **Jev Settings → Agent Runtime Parameters → Step Delay (ms)**, change to **50**, then click **Save All Settings**. Existing saved settings are not silently overwritten. The overlay with numbered badges can also be disabled if large pages feel slow; trusted input is recommended for reliable clicks.
+
+### Reproducible local benchmark (no cloud credentials)
+
+Run `npm run build`, then `npx playwright install chromium` if Playwright Chromium is missing, and `npx tsx scripts/benchmark-agent.ts`. The benchmark launches an isolated temporary Chromium profile and a local mock Jev server. It tests one click followed by a DONE decision, comparing step delays of 300 ms, 75 ms and 0 ms. It does **not** measure OpenRouter/TypeSafe network performance or the installed Waifu Agent. You may set `CHROMIUM_PATH` to an existing Chromium-for-testing executable to avoid downloading another copy.
+
+For provider-specific latency, open **Jev Settings**, click **Test OpenRouter Decisions API** or **Test TypeSafe API**, and compare the elapsed time. Use the same task and time window. Direct TypeSafe may respond faster depending on route and load, but results vary.
+
 ## Commands
 
 | Command | Công dụng |

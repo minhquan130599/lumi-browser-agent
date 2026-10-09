@@ -5,6 +5,7 @@ import { suggestSwaggerGetOperation } from '../shared/swagger-support';
 import {
   ActResult,
   AgentProgress,
+  AgentTiming,
   ChoiceQuestion,
   AgentStepLog,
   AppSettings,
@@ -96,6 +97,8 @@ export class AgentRunner {
   private history: RecentAction[] = [];
   private activeTabId: number | null = null;
   private runToken = 0;
+  private runStartedAt = 0;
+  private decisionAbort: AbortController | null = null;
 
   private lastFingerprint: string | null = null;
   private lastSummary: PageSummary | null = null;
@@ -179,6 +182,9 @@ export class AgentRunner {
 
   private reset(goal: string, tabId: number): void {
     this.runToken++;
+    this.decisionAbort?.abort(new Error('Superseded by a new agent task'));
+    this.decisionAbort = null;
+    this.runStartedAt = Date.now();
     this.activeTabId = tabId;
     this.history = [];
     this.lastFingerprint = null;
@@ -201,6 +207,11 @@ export class AgentRunner {
     this.progress = {
       status: 'running',
       goal,
+      timing: {
+        observeMs: 0, decisionMs: 0, textHelperMs: 0, actionMs: 0,
+        waitMs: 0, startupMs: 0, totalMs: 0, decisionCalls: 0,
+        currentPhase: 'starting',
+      },
       currentStep: 0,
       maxSteps: this.settings.maxSteps || DEFAULT_SETTINGS.maxSteps,
       logs: [],
@@ -211,7 +222,9 @@ export class AgentRunner {
     if (this.progress.status === 'running') return;
     this.reset(goal, tabId);
     this.broadcastUpdate();
+    const startup = Date.now();
     await this.attachInput(tabId);
+    this.recordTime('startupMs', Date.now() - startup);
     await this.loop(this.runToken);
   }
 
@@ -233,7 +246,9 @@ export class AgentRunner {
     }
 
     this.broadcastUpdate();
+    const startup = Date.now();
     await this.attachInput(tabId);
+    this.recordTime('startupMs', Date.now() - startup);
     const cont = await this.executeOneStep(token);
     if (token === this.runToken && this.progress.status === 'running') {
       this.progress.status = cont ? 'paused' : 'idle';
@@ -244,10 +259,13 @@ export class AgentRunner {
 
   public stop(): void {
     this.runToken++;
+    this.decisionAbort?.abort(new Error('Stopped by user'));
+    this.decisionAbort = null;
     void this.input.detach();
     if (this.progress.status === 'running' || this.progress.status === 'paused') {
       this.progress.status = 'idle';
     }
+    if (this.progress.timing) this.progress.timing.currentPhase = 'finished';
     this.broadcastUpdate();
     this.sendStatus({ clear: true });
   }
@@ -258,10 +276,16 @@ export class AgentRunner {
         this.finish('blocked', `Reached the ${this.progress.maxSteps}-step budget without DONE.`);
         break;
       }
+      const stepBefore = this.progress.currentStep;
       const cont = await this.executeOneStep(token);
       if (!cont) break;
-      if (this.settings.stepDelayMs > 0) {
-        await new Promise((resolve) => setTimeout(resolve, this.settings.stepDelayMs));
+      // Only throttle after a real browser action. Pure decision rechecks should not sleep.
+      if (this.settings.stepDelayMs > 0 && this.progress.currentStep > stepBefore) {
+        this.setPhase('waiting');
+        const delay = Math.min(5000, this.settings.stepDelayMs);
+        const beforeWait = Date.now();
+        await new Promise((resolve) => setTimeout(resolve, delay));
+        this.recordTime('waitMs', Date.now() - beforeWait);
       }
     }
   }
@@ -347,6 +371,8 @@ export class AgentRunner {
     }
 
     // 1. Observe
+    this.setPhase('observing');
+    const observeStart = Date.now();
     let snapshot: PageSnapshot;
     try {
       await this.ensureContentScriptReady(tabId);
@@ -356,9 +382,11 @@ export class AgentRunner {
       }
       snapshot = response.snapshot;
     } catch (err: any) {
+      this.recordTime('observeMs', Date.now() - observeStart);
       this.finish('error', `Observe failed: ${err?.message || String(err)}`);
       return false;
     }
+    this.recordTime('observeMs', Date.now() - observeStart);
     if (token !== this.runToken) return false;
     // Diagnostic summary helps explain BLOCKED at step 0, without exposing full page contents.
     const interactiveActions = snapshot.actions.filter((a) =>
@@ -463,16 +491,29 @@ export class AgentRunner {
       this.vetoed = null;
     }
 
+    this.setPhase('deciding');
     const started = Date.now();
+    if (this.progress.timing) {
+      this.progress.timing.lastRequestBytes = new TextEncoder().encode(JSON.stringify(request)).length;
+    }
+    const decisionController = new AbortController();
+    this.decisionAbort = decisionController;
     let jevResponse;
     try {
       this.decisionCount++;
-      jevResponse = await callJevProvider(this.settings, request);
+      if (this.progress.timing) this.progress.timing.decisionCalls++;
+      jevResponse = await callJevProvider(this.settings, request, decisionController.signal, true);
     } catch (err: any) {
+      this.recordTime('decisionMs', Date.now() - started);
+      if (token !== this.runToken) return false;
       this.finish('error', `Jev decision failed: ${err?.message || String(err)}`);
       return false;
+    } finally {
+      if (this.decisionAbort === decisionController) this.decisionAbort = null;
     }
     const latencyMs = Date.now() - started;
+    this.recordTime('decisionMs', latencyMs);
+    if (this.progress.timing) this.progress.timing.lastDecisionMs = latencyMs;
     if (token !== this.runToken) return false;
 
     let operationAnswer;
@@ -543,6 +584,8 @@ export class AgentRunner {
       // changes the documentation UI only; never click Try it out / Execute
       // via this fallback, and never use it for POST/PATCH/DELETE operations.
       const action = swaggerSuggestion.action;
+      this.setPhase('acting');
+      const fastActStart = Date.now();
       this.sendStatus({ text: 'Opening Swagger documentation for ' + swaggerSuggestion.path, latencyMs });
       try {
         const result = await this.act(tabId, action);
@@ -555,6 +598,8 @@ export class AgentRunner {
         this.finish('blocked', 'Could not open Swagger GET ' + swaggerSuggestion.path + ': ' +
           (error?.message || String(error)));
         return false;
+      } finally {
+        this.recordTime('actionMs', Date.now() - fastActStart);
       }
       this.history.push({
         step: 1,
@@ -590,7 +635,7 @@ export class AgentRunner {
         // A hesitant verdict gets one more look after the page settles; only a repeat ends the run.
         this.pendingTerminal = operation;
         this.sendStatus({ text: operation === 'DONE' ? 'Checking whether the task is complete…' : 'Checking for another way forward…', latencyMs });
-        await new Promise((r) => setTimeout(r, 600));
+        await new Promise((r) => setTimeout(r, 120));
         return true;
       }
       this.addLog({
@@ -654,6 +699,7 @@ export class AgentRunner {
     // 6. TYPE_TEXT: the helper supplies the value; reuse it only for an identical input after a stale retry
     let generatedText: string | undefined;
     if (operation === 'TYPE_TEXT') {
+      this.setPhase('typing');
       const context = createFieldContext(
         this.progress.goal,
         targetAction,
@@ -664,6 +710,7 @@ export class AgentRunner {
       if (this.pendingText && this.pendingText.key === key) {
         generatedText = this.pendingText.text;
       } else {
+        const helperStarted = Date.now();
         try {
           generatedText = await generateFieldText(this.settings, context);
         } catch (err: any) {
@@ -683,6 +730,8 @@ export class AgentRunner {
           this.lastStaleNotice = `ATTENTION: No value for the field "${targetAction.label}" can be derived from the goal, so TYPE_TEXT there is not possible. Use links, buttons or other controls instead.`;
           this.broadcastUpdate();
           return true;
+        } finally {
+          this.recordTime('textHelperMs', Date.now() - helperStarted);
         }
         this.pendingText = { key, text: generatedText };
       }
@@ -690,6 +739,8 @@ export class AgentRunner {
     }
 
     // 7. Act (never retried)
+    this.setPhase('acting');
+    const actStarted = Date.now();
     this.sendStatus({ text: `${operation} ${targetAction.label}`.slice(0, 120), latencyMs });
     let navigated = false;
     try {
@@ -722,6 +773,8 @@ export class AgentRunner {
       }
       // The action ran and the page navigated before it could reply; the action still counts.
       navigated = true;
+    } finally {
+      this.recordTime('actionMs', Date.now() - actStarted);
     }
 
     // 8. Record execution before observing again
@@ -840,6 +893,9 @@ export class AgentRunner {
 
   private finish(status: 'done' | 'blocked' | 'error', message?: string): void {
     void this.input.detach();
+    this.decisionAbort?.abort();
+    this.decisionAbort = null;
+    if (this.progress.timing) this.progress.timing.currentPhase = 'finished';
     this.progress.status = status;
     if (message) {
       this.progress.lastError = message;
@@ -850,7 +906,22 @@ export class AgentRunner {
     if (status !== 'done') this.sendStatus({ text: message || status });
   }
 
+  private setPhase(phase: AgentTiming['currentPhase']): void {
+    if (this.progress.timing) this.progress.timing.currentPhase = phase;
+    this.broadcastUpdate();
+  }
+
+  private recordTime(key: 'observeMs' | 'decisionMs' | 'textHelperMs' | 'actionMs' | 'waitMs' | 'startupMs', delta: number): void {
+    if (this.progress.timing) {
+      this.progress.timing[key] += Math.max(0, delta);
+      if (key === 'observeMs') this.progress.timing.lastObserveMs = Math.max(0, delta);
+    }
+  }
+
   private broadcastUpdate(): void {
+    if (this.progress.timing && this.runStartedAt) {
+      this.progress.timing.totalMs = Math.max(0, Date.now() - this.runStartedAt);
+    }
     try {
       chrome.runtime
         .sendMessage({ type: 'PROGRESS_UPDATE', progress: this.progress })

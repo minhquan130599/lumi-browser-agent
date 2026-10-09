@@ -29,6 +29,20 @@ type Progress = {
     probabilities?: Record<string, number>;
   }[];
   lastError?: string;
+  timing?: {
+    observeMs: number;
+    decisionMs: number;
+    textHelperMs: number;
+    actionMs: number;
+    waitMs: number;
+    startupMs: number;
+    totalMs: number;
+    decisionCalls: number;
+    currentPhase: string;
+    lastDecisionMs?: number;
+    lastObserveMs?: number;
+    lastRequestBytes?: number;
+  };
   observation?: {
     url: string;
     title: string;
@@ -303,6 +317,18 @@ function App() {
                       : ''}
                   </div>
                 )}
+                {progress.timing && (
+                  <div className="agent-timing">
+                    <div><b>Hiệu năng</b> · Giai đoạn: {progress.timing.currentPhase}</div>
+                    <div>Tổng: {(progress.timing.totalMs / 1000).toFixed(1)}s · Gọi Jev: {progress.timing.decisionCalls}</div>
+                    <div>Jev: {(progress.timing.decisionMs / 1000).toFixed(2)}s · DOM: {(progress.timing.observeMs / 1000).toFixed(2)}s</div>
+                    <div>Text Helper: {(progress.timing.textHelperMs / 1000).toFixed(2)}s · Click: {(progress.timing.actionMs / 1000).toFixed(2)}s</div>
+                    <div>Chờ: {(progress.timing.waitMs / 1000).toFixed(2)}s · Khởi động: {(progress.timing.startupMs / 1000).toFixed(2)}s</div>
+                    {progress.timing.lastDecisionMs !== undefined && (
+                      <div>Jev lần gần nhất: {progress.timing.lastDecisionMs} ms · Payload: {((progress.timing.lastRequestBytes || 0) / 1024).toFixed(1)} KB</div>
+                    )}
+                  </div>
+                )}
                 {progress.lastError && <p className="agent-reason">{progress.lastError}</p>}
                 {progress.observation && (
                   <details className="agent-details" open={progress.status === 'blocked'}>
@@ -339,6 +365,7 @@ function App() {
                         step: progress.currentStep,
                         maxSteps: progress.maxSteps,
                         reason: progress.lastError,
+                        timing: progress.timing,
                         observation: progress.observation,
                         decisions: progress.logs.map(log => ({
                           operation: log.operation,

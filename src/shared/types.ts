@@ -80,7 +80,7 @@ export const DEFAULT_SETTINGS: AppSettings = {
     model: TEXT_HELPER_PRESETS.openrouter.model,
   },
   maxSteps: 30,
-  stepDelayMs: 300,
+  stepDelayMs: 75,
   showOverlay: true,
   trustedInput: true,
 };
@@ -280,8 +280,25 @@ export interface AgentStepLog {
   error?: string;
 }
 
+export interface AgentTiming {
+  /** Sum of all elapsed phase measurements in this task. */
+  observeMs: number;
+  decisionMs: number;
+  textHelperMs: number;
+  actionMs: number;
+  waitMs: number;
+  startupMs: number;
+  totalMs: number;
+  decisionCalls: number;
+  currentPhase: 'starting' | 'observing' | 'deciding' | 'typing' | 'acting' | 'waiting' | 'finished';
+  lastDecisionMs?: number;
+  lastObserveMs?: number;
+  lastRequestBytes?: number;
+}
+
 export interface AgentProgress {
   status: AgentStatus;
+  timing?: AgentTiming;
   goal: string;
   currentStep: number;
   maxSteps: number;

@@ -237,10 +237,17 @@ function pageKey(cache: JevCache): unknown[] {
   ];
 }
 
-function guard(cache: JevCache, e: Element | null | undefined): unknown[] | null {
+function guard(cache: JevCache, e: Element | null | undefined, textCache?: WeakMap<Element, string>): unknown[] | null {
   if (!e || !e.isConnected || !isVisible(e)) return null;
   const scope = e.closest('form,dialog,[role="dialog"],article,li,tr,[role="row"]') || e.parentElement;
   const inp = e as HTMLInputElement;
+  // Several controls frequently share a form/row. Avoid re-reading its entire
+  // innerText (which can trigger synchronous layout) for every control.
+  let scopeText = scope ? textCache?.get(scope) : undefined;
+  if (scopeText === undefined) {
+    scopeText = innerText(scope).slice(0, 1500);
+    if (scope) textCache?.set(scope, scopeText);
+  }
   return [
     identity(cache, e),
     roleOf(e),
@@ -255,7 +262,7 @@ function guard(cache: JevCache, e: Element | null | undefined): unknown[] | null
     e.getAttribute('aria-checked'),
     e.getAttribute('aria-selected'),
     e.getAttribute('href'),
-    innerText(scope).slice(0, 6000),
+    scopeText,
   ];
 }
 
@@ -385,9 +392,10 @@ function readState(): { snapshot: PageSnapshot; observed: ObservedState } | null
 
   const key = pageKey(cache);
   const guards: Record<number, unknown> = {};
+  const scopeTextCache = new WeakMap<Element, string>();
   for (const a of actions) {
     if (a.node !== undefined && !(a.node in guards)) {
-      guards[a.node] = guard(cache, cache.nodes.get(a.node));
+      guards[a.node] = guard(cache, cache.nodes.get(a.node), scopeTextCache);
     }
   }
 

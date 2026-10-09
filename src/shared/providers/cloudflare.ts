@@ -1,9 +1,11 @@
 import { CloudflareConfig, JevRequest, JevResponse } from '../types';
-import { postJson } from './http';
+import { postJson, INTERACTIVE_JEV_HTTP } from './http';
 
 export async function callCloudflare(
   config: CloudflareConfig,
-  request: JevRequest
+  request: JevRequest,
+  signal?: AbortSignal,
+  fast = false
 ): Promise<JevResponse> {
   const accountId = (config.accountId || '').trim();
   const apiToken = (config.apiToken || '').trim();
@@ -19,7 +21,7 @@ export async function callCloudflare(
     endpoint,
     { Authorization: `Bearer ${apiToken}` },
     { model, input: { state: request.state, questions: request.questions } },
-    { label: 'Cloudflare AI' }
+    { label: 'Cloudflare AI', ...(fast ? INTERACTIVE_JEV_HTTP : {}), signal }
   );
 
   // Cloudflare wraps the response in { success: true, result: ... }
