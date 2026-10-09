@@ -88,7 +88,7 @@ Nếu Jev trả `BLOCKED` trước khi thao tác dù còn nút tương tác, Lum
 
 Khi xảy ra lỗi, ở Agent Jev hãy mở **Chẩn đoán DOM: Jev đang nhìn thấy gì?** → **Sao chép chẩn đoán**, sau đó kiểm tra provider, model và các nhãn phần tử mà extension đọc được.
 
-## Local Jev (tev1 / SystemOne on Ollama): fixing HTTP 403
+## Local Jev (tev1 / SystemOne on Ollama): HTTP 403 and token-limit HTTP 400
 
 If Lumi calls `http://<LAN-IP>:11434/v1/systemone` and shows **HTTP 403** while a command-line `curl` without `Origin` works, the Ollama server is probably rejecting Chrome's `Origin: chrome-extension://<extension-id>` header. Confirm it with `curl -i -H 'Origin: chrome-extension://<extension-id>' ...` and compare without the header.
 
@@ -103,7 +103,11 @@ If Ollama runs as a Linux systemd service, use `sudo systemctl edit ollama`, add
 
 Avoid `OLLAMA_ORIGINS=*`: that would enable requests from arbitrary web origins. Allowing the precise extension origin is safer. Keep Ollama on a trusted LAN/firewall, especially if it does not require authentication.
 
-**Protocol compatibility:** this project also converts local SystemOne decision requests to flat string descriptions; the Ollama `tev1` endpoint rejects object-valued `choice.criteria` and requires 2–26 candidates per choice. One-option target questions are omitted, and the runtime selects the sole target itself. If more than 26 are visible, the request prioritizes candidates whose descriptions match the task. Official TypeSafe and OpenRouter requests are unchanged.
+**Protocol compatibility:** Local SystemOne requests use flat string choice descriptions, and only 2–26 candidates are permitted per choice. Lumi now sends at most **10 goal-relevant targets** per choice (fewer after a context-limit retry), preserves the original browser-element IDs, and keeps the relevant controls (e.g. `GET /v1/voices`) even when they are late in the page. One-target questions are omitted because the browser runtime already knows the only possible target. Official TypeSafe and OpenRouter requests are unchanged.
+
+**HTTP 400 — prompt exceeds 2050 tokens:** the local model cannot accept the full page and verbose instructions. Lumi compresses page text, element summaries, recent actions and repeated rules for local SystemOne only. If it still receives a specific "prompt N has X tokens; expected 1–2050" HTTP 400, it retries with two progressively smaller contexts. Other HTTP 400 errors are not retried. If even the smallest context cannot fit, use a more specific goal or a model with a larger context. This does not increase the model's actual context limit.
+
+**Local inference timing:** `tev1` can take longer on a cold start than a cloud decision API, so local SystemOne uses an abortable 45-second inference timeout without automatic network retries. Cloud Jev retains its shorter 12-second request timeout.
 
 See [Ollama FAQ — allowing additional web origins](https://github.com/ollama/ollama/blob/main/docs/faq.mdx#how-can-i-allow-additional-web-origins-to-access-ollama).
 
@@ -111,7 +115,7 @@ See [Ollama FAQ — allowing additional web origins](https://github.com/ollama/o
 
 The Jev agent now reports a timing breakdown in **Agent Jev → Hiệu năng**: total elapsed time, decision API time, DOM observation, text-helper time, browser-action time, wait time, request payload size, and number of decision calls. Use **Sao chép chẩn đoán** to share those counters without sharing provider credentials. The displayed values are measured on your own Chrome installation.
 
-For faster interactive control, a Jev run now limits each decision request (including retry) to **12 seconds**, retries at most **once** after **250 ms**, and cancels pending network requests when you stop the agent. This prevents indefinite hangs but cannot speed up an overloaded provider. Standard direct provider calls outside agent mode retain the previous retry settings.
+For faster interactive control, **cloud** Jev requests are limited to **12 seconds**, with at most one retry after 250 ms. **Local** SystemOne requests may take up to 45 seconds to allow for model cold starts and do not retry transient network errors. Pending requests are cancelled when you stop the agent; these limits prevent indefinite hangs but do not increase model inference speed. Standard direct provider calls outside agent mode retain the previous retry settings.
 
 The default Step Delay for new installations is now 75 ms (previously 300 ms). For an existing installation, open **Jev Settings → Agent Runtime Parameters → Step Delay (ms)**, change to **50**, then click **Save All Settings**. Existing saved settings are not silently overwritten. The overlay with numbered badges can also be disabled if large pages feel slow; trusted input is recommended for reliable clicks.
 

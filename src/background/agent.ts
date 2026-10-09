@@ -2,6 +2,7 @@ import { buildJevRequest, validateChoiceAnswer } from '../shared/action-space';
 import { activeJevModel, callJevProvider } from '../shared/providers';
 import { createFieldContext, generateFieldText } from '../shared/text-helper';
 import { suggestSwaggerGetOperation } from '../shared/swagger-support';
+import { isLocalSystemOneEndpoint, toLocalSystemOneRequest } from '../shared/providers/local-systemone';
 import {
   ActResult,
   AgentProgress,
@@ -494,7 +495,10 @@ export class AgentRunner {
     this.setPhase('deciding');
     const started = Date.now();
     if (this.progress.timing) {
-      this.progress.timing.lastRequestBytes = new TextEncoder().encode(JSON.stringify(request)).length;
+      const local = this.settings.activeProvider === 'typesafe' &&
+        isLocalSystemOneEndpoint(this.settings.typesafe.endpoint);
+      const sent = local ? toLocalSystemOneRequest(request) : request;
+      this.progress.timing.lastRequestBytes = new TextEncoder().encode(JSON.stringify(sent)).length;
     }
     const decisionController = new AbortController();
     this.decisionAbort = decisionController;

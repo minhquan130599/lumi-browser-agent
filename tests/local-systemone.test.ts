@@ -71,7 +71,7 @@ describe('Self-hosted SystemOne compatibility', () => {
     input.questions.click_target.criteria = large;
     const result = toLocalSystemOneRequest(input);
     const keys = Object.keys(result.questions.click_target.criteria as Record<string, unknown>);
-    expect(keys).toHaveLength(26);
+    expect(keys).toHaveLength(10);
     expect(keys).toContain('34');
     expect(keys).not.toContain('30');
   });
