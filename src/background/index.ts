@@ -50,7 +50,29 @@ chrome.runtime.onMessage.addListener(
             const tabId = await resolveTabId();
             const tab = await chrome.tabs.get(tabId);
             if (!tab.url || !(tab.url.startsWith('https://') || tab.url.startsWith('http://'))) throw new Error('Chỉ hỗ trợ HTTP/HTTPS');
-            const results = await chrome.scripting.executeScript({target:{tabId},func:()=>{const clone=document.body.cloneNode(true) as HTMLElement;clone.querySelectorAll('script,style,noscript,nav,footer,header,form,input,textarea,[contenteditable],iframe').forEach(e=>e.remove());return {title:document.title,url:location.href,text:(clone.innerText||clone.textContent||'').replace(/\s+/g,' ').slice(0,16000)}}});
+            // Avoid cloning huge DOM trees on SPAs such as ChatGPT.
+            const results = await chrome.scripting.executeScript({
+              target: { tabId },
+              func: () => {
+                const root = document.querySelector('main') || document.querySelector('article') || document.body;
+                if (!root) return { title: document.title, url: location.href, text: '' };
+                const walker = document.createTreeWalker(root, NodeFilter.SHOW_TEXT);
+                const parts: string[] = [];
+                let length = 0;
+                let scanned = 0;
+                let node: Node | null;
+                while ((node = walker.nextNode()) && length < 9000 && scanned++ < 3000) {
+                  const parent = node.parentElement;
+                  if (!parent || parent.closest('script,style,noscript,nav,footer,header,form,button,textarea,select,[aria-hidden="true"],[hidden],[contenteditable="true"]')) continue;
+                  const value = (node.textContent || '').trim().replace(/\s+/g, ' ');
+                  if (!value) continue;
+                  const bounded = value.slice(0, 9000 - length);
+                  parts.push(bounded);
+                  length += bounded.length + 1;
+                }
+                return { title: document.title, url: location.href, text: parts.join(' ').slice(0, 9000) };
+              },
+            });
             sendResponse({success:true,page:results[0]?.result});return;
           }
           case 'GET_SETTINGS': {

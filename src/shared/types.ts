@@ -287,6 +287,16 @@ export interface AgentProgress {
   maxSteps: number;
   logs: AgentStepLog[];
   lastError?: string;
+  /** Compact diagnostics from the most recent visible DOM snapshot; no page body is stored. */
+  observation?: {
+    url: string;
+    title: string;
+    visibleActions: number;
+    interactiveActions: number;
+    omittedActions: number;
+    scrollDownAvailable: boolean;
+    candidateLabels: string[];
+  };
   /** How input reaches the page this run, when it is not the trusted path. */
   inputNote?: string;
 }

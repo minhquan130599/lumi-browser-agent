@@ -124,6 +124,39 @@ describe('AgentRunner', () => {
     expect(page.sent.filter((m) => m.type === 'CONTENT_ACT')).toHaveLength(0);
   });
 
+  it('reviews a premature first-step BLOCKED when interactive controls are visible', async () => {
+    jev.mockResolvedValueOnce(answer('BLOCKED'))
+      .mockResolvedValueOnce(answer('CLICK', clickTarget('1')))
+      .mockResolvedValueOnce(answer('DONE'));
+
+    page.act = () => {
+      page.snapshot = snapshot({ url: 'https://example.com/results', text: 'Results loaded' });
+      return { ok: true, via: 'synthetic' };
+    };
+
+    const r = runner();
+    await r.start('Search for voices', 7);
+    expect(r.getProgress().status).toBe('done');
+    expect(r.getProgress().currentStep).toBe(1);
+    expect(r.getProgress().logs.some(log => log.operation === 'BLOCKED (initial review)')).toBe(true);
+    expect(r.getProgress().observation?.interactiveActions).toBeGreaterThan(0);
+    const secondRequest = jev.mock.calls[1][1];
+    expect((secondRequest.questions.operation.instructions as any).ineffective_action_alert).toContain('RECHECK FIRST-STEP BLOCKED');
+  });
+
+  it('reports an actionable diagnosis when Jev confirms BLOCKED before any action', async () => {
+    jev.mockResolvedValue(answer('BLOCKED'));
+    const r = runner();
+    await r.start('Test a voice API', 7);
+    expect(r.getProgress().status).toBe('blocked');
+    expect(r.getProgress().currentStep).toBe(0);
+    expect(jev).toHaveBeenCalledTimes(2);
+    expect(r.getProgress().lastError).toMatch(/Jev selected BLOCKED before any page actions/);
+    expect(r.getProgress().lastError).toMatch(/Visible interactive actions: 3/);
+    expect(r.getProgress().observation?.candidateLabels).toContain('Search');
+    expect(page.sent.filter(message => message.type === 'CONTENT_ACT')).toHaveLength(0);
+  });
+
   it('executes the chosen target, records it, and reports page_changed on the next decision', async () => {
     jev.mockResolvedValueOnce(answer('CLICK', clickTarget('1'))).mockResolvedValueOnce(answer('DONE'));
     page.act = () => {

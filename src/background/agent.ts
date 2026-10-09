@@ -160,6 +160,8 @@ export class AgentRunner {
   private vetoed: 'DONE' | 'BLOCKED' | null = null;
   /** One inconsistent answer is asked again; a second one ends the run. */
   private invalidAnswerRetried = false;
+  /** Give a high-confidence first-step BLOCKED one extra independent look without forcing a click. */
+  private initialBlockReviewed = false;
   /** Text generated for a decision that turned out stale; reused only for an identical helper input. */
   private pendingText: { key: string; text: string } | null = null;
 
@@ -193,6 +195,7 @@ export class AgentRunner {
     this.pendingTerminal = null;
     this.vetoed = null;
     this.invalidAnswerRetried = false;
+    this.initialBlockReviewed = false;
     this.pendingText = null;
     this.progress = {
       status: 'running',
@@ -356,6 +359,20 @@ export class AgentRunner {
       return false;
     }
     if (token !== this.runToken) return false;
+    // Diagnostic summary helps explain BLOCKED at step 0, without exposing full page contents.
+    const interactiveActions = snapshot.actions.filter((a) =>
+      a.kind === 'click' || a.kind === 'fill' || a.kind === 'select'
+    );
+    this.progress.observation = {
+      url: snapshot.url,
+      title: snapshot.title,
+      visibleActions: snapshot.actions.length,
+      interactiveActions: interactiveActions.length,
+      omittedActions: snapshot.omitted_actions,
+      scrollDownAvailable: snapshot.actions.some((a) => a.id === 'scroll_down'),
+      candidateLabels: [...new Set(interactiveActions.map((a) => a.label))].slice(0, 12),
+    };
+    this.broadcastUpdate();
 
     // 2. Resolve what the previous action did and detect deadlocks
     const summary = summarize(snapshot);
@@ -477,6 +494,39 @@ export class AgentRunner {
       return true;
     }
 
+    if (
+      operation === 'BLOCKED' &&
+      this.history.length === 0 &&
+      !this.initialBlockReviewed &&
+      operationAnswer.confidence >= TERMINAL_CONFIRM_THRESHOLD &&
+      (interactiveActions.length > 0 || this.progress.observation?.scrollDownAvailable)
+    ) {
+      // Jev can prematurely say BLOCKED on collapsed API docs even when useful navigation
+      // is available. Ask for a second opinion, but retain BLOCKED as a valid choice:
+      // we must not force a random or potentially destructive click.
+      this.initialBlockReviewed = true;
+      const example = (this.progress.observation?.candidateLabels || []).slice(0, 6).join(', ');
+      this.lastStaleNotice =
+        `RECHECK FIRST-STEP BLOCKED: no browser action was attempted yet. ` +
+        `Visible controls include: ${example || '(no buttons)'}. ` +
+        `If a relevant control or SCROLL_DOWN advances the user's goal, choose it. ` +
+        `Otherwise choose BLOCKED again. Never click unrelated or destructive controls.`;
+      this.addLog({
+        step: 0,
+        timestamp: Date.now(),
+        operation: 'BLOCKED (initial review)',
+        confidence: operationAnswer.confidence,
+        latencyMs,
+        provider,
+        probabilities: operationAnswer.probabilities,
+        goalDone,
+        stuck,
+      });
+      this.broadcastUpdate();
+      this.sendStatus({ text: 'Checking initial BLOCKED decision...', latencyMs });
+      return true;
+    }
+
     if (operation === 'DONE' || operation === 'BLOCKED') {
       if (operationAnswer.confidence < TERMINAL_CONFIRM_THRESHOLD && this.pendingTerminal !== operation) {
         // A hesitant verdict gets one more look after the page settles; only a repeat ends the run.
@@ -496,8 +546,26 @@ export class AgentRunner {
         goalDone,
         stuck,
       });
-      this.finish(operation === 'DONE' ? 'done' : 'blocked');
-      this.sendStatus({ text: operation === 'DONE' ? 'Done' : 'Blocked', latencyMs });
+      if (operation === 'BLOCKED') {
+        const observed = this.progress.observation;
+        const candidateList = (observed?.candidateLabels || []).slice(0, 6).join(', ') || 'none';
+        const confidence = Math.round(operationAnswer.confidence * 100);
+        const stuckDetail = stuck === undefined
+          ? 'no stuck score returned'
+          : `stuck score ${Math.round(stuck * 100)}%`;
+        const firstStep = this.progress.currentStep === 0 ? ' before any page actions.' : '.';
+        const message =
+          `Jev selected BLOCKED${firstStep} ` +
+          `Confidence ${confidence}%, ${stuckDetail}. ` +
+          `Visible interactive actions: ${observed?.interactiveActions ?? 0}; ` +
+          `scroll-down available: ${observed?.scrollDownAvailable ? 'yes' : 'no'}. ` +
+          `Sample targets: ${candidateList}. ` +
+          'This is a model decision, not proof that the API or page is inaccessible.';
+        this.finish('blocked', message);
+      } else {
+        this.finish('done');
+      }
+      this.sendStatus({ text: operation === 'DONE' ? 'Done' : 'Blocked (see Lumi diagnostics)', latencyMs });
       return false;
     }
 
