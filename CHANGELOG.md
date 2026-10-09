@@ -1,0 +1,64 @@
+# Changelog
+
+## Unreleased
+- The release asset is now `jev-for-chrome-extension-<version>.zip`, made by `npm run package`. Up to 1.5.3 it was `jev-for-chrome-<version>.zip`, the name GitHub gives its own source archive, so both unzipped to the same folder and loading the source one failed with "Manifest file is missing or unreadable" ([#1](https://github.com/chy4pro/jev-for-chrome/issues/1)). The 1.5.3 asset has been renamed in place; its contents are unchanged.
+- `npm run package` refuses to build the zip when `dist/manifest.json` and `package.json` disagree on the version, or when the manifest points at a file that is not in `dist/`. `package.json` had stayed at 1.4.5 since that release; it is 1.5.3 now.
+
+## 1.5.3 — 2026-09-22
+- A model request whose `fetch` throws (DNS failure, connection reset, "Failed to fetch" in the service worker) is retried with the same backoff as a transient HTTP status, instead of failing the run on the first attempt. A live suite lost five tasks in a ten-second network window to this; model requests are idempotent, so resending is safe.
+- The E2E suite takes its provider, model, endpoint and text helper from the environment, so it can run against any gateway; OpenRouter stays the default. The options-page check no longer depends on the OpenRouter tab being active, and `tsx` is declared as a dev dependency.
+- [Runs through Vercel AI Gateway recorded](docs/e2e-suite-2026-09-22-vercel.md), including which models that gateway's free tier allows.
+
+## 1.5.2 — 2026-09-20
+- Answer validation, the Jev request/answer types and the text helper's reply-format parser come from [jev-dev-kit](https://github.com/chy4pro/jev-dev-kit) 0.2.0, the framework extracted from this extension. Providers and the HTTP code stay here; behaviour is unchanged.
+
+## 1.5.1 — 2026-09-20
+- `debugger` is a required permission: Chrome does not allow it as an optional one (the store dropped it with a warning). The Options switch still decides whether trusted input is used; off, synthetic DOM events are used. Updating from 1.4.x re-asks for permissions once.
+
+## 1.5.0 — 2026-09-20
+- Trusted input: clicks, typing and Enter go through the DevTools protocol (optional `debugger` permission, on by default, switchable in Options). Pages receive real user input: javascript: links, hover menus and handlers that check `isTrusted` work without special cases. Chrome shows its "started debugging" bar during a run; dismissing it stops the run.
+- One execution pipeline: the page checks freshness, scrolls the target into view, waits for it to stop moving and checks for cover, then input is dispatched (trusted, or synthetic when the permission is missing or DevTools owns the tab). Post-action waiting is a DOM-quiet window instead of fixed delays.
+- Action results carry a code (`stale`, `missing`, `disabled`, `offscreen`, `covered`, `failed`, `invalid`) so the loop decides by kind, not by message text. Number fields are set directly.
+- `npm run e2e:input`: model-free check of the trusted-input path on fixture pages; `npm run build:test` makes the headless build with the permission granted up front.
+
+## 1.4.5 — 2026-09-20
+- javascript: links are clicked in the page's main world (via the background), because a click from the extension's isolated world is checked against the extension's CSP and blocked. Fixture and suite task added.
+
+## 1.4.4 — 2026-09-19
+- Popup: the main button is "Run".
+
+## 1.4.3 — 2026-09-19
+- Logo applied everywhere: icons re-rendered from assets/icon.svg with pixel-bound centring and even padding (toolbar sizes on a dark tile), popup and options headers, the in-page status bar, README, and the store promo tile.
+
+## 1.4.2 — 2026-09-19
+- New icon (assets/icon.svg, rendered by scripts/render-icons.mjs at 16/32/48/128) and a 440×280 promo tile for the store listing.
+
+## 1.4.1 — 2026-09-19
+- Manifest description shortened to the Chrome Web Store limit; privacy policy and store listing material added under docs/.
+
+## 1.4.0 — 2026-09-19
+- Renamed to Jev for Chrome (repository chy4pro/jev-for-chrome; the old URL redirects). Extension name, popup and options titles, package name and release archive name follow.
+- Community project, not affiliated with TypeSafe or Browser Use; stated in the manifest description and README.
+
+## 1.3.1 — 2026-09-19
+- Follow tabs opened by a click (target=_blank, window.open); return to the opener when that tab closes.
+- Fixture pages served by the test harness; new-tab task in the suite.
+
+## 1.3.0 — 2026-09-19
+- Richer model context: task in state, element `href` and `section`, worded action outcomes, visited URLs, rules that reference state fields.
+- Independent `goal_done` and `stuck` checks in the same request; hesitant or contradicted DONE/BLOCKED are asked again instead of ending the run.
+- Repeated-action detection that survives page-changing toggles; tolerance for two-decimal probability rounding.
+- Observation drops controls covered by another block; click points use the first rendered fragment of wrapped links.
+- Popup: Copy trace, goal/stuck per step. Harness: E2E_LOCALE.
+
+## 1.2.x — 2026-09-19
+- PRESS_ENTER control for fields without a submit button; SVG-safe clicks; covered-target feedback; hover-layer clicks inside one component.
+- Text-helper refusals fed back to the model; clearer key diagnostics; settings migration for obsolete model ids.
+- 17-task suite from the popup, the reference project, X demos and WebVoyager-style sites; recorded traces in docs/.
+
+## 1.1.x — 2026-09-19
+- Stale-safe executor (one click, no implicit Enter, freshness and occlusion guards), deadlock detection, strict answer validation, service-worker settings race fixed.
+- Headless-Chromium harness that loads the built extension (npm run e2e:ext).
+
+## 1.0.0 — 2026-09-18
+- Initial release.
