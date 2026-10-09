@@ -15,19 +15,63 @@ describe('Chrome Built-in AI integration', () => {
     ).rejects.toThrow('Không tìm thấy Chrome Prompt API');
   });
 
-  it('rejects unsupported Vietnamese without starting the session', async () => {
-    const create = vi.fn();
-    const availability = vi.fn().mockResolvedValue('unavailable');
+  it('falls back to an English-configured session for Vietnamese prompts', async () => {
+    const destroy = vi.fn();
+    const create = vi.fn().mockResolvedValue({
+      prompt: vi.fn().mockResolvedValue('Đây là tóm tắt.'),
+      destroy,
+    });
+    const availability = vi.fn()
+      .mockResolvedValueOnce('unavailable') // Vietnamese isn't advertised
+      .mockResolvedValueOnce('available'); // English model is ready
+    const onStatus = vi.fn();
     vi.stubGlobal('LanguageModel', { availability, create });
 
-    await expect(
-      askAI(DEFAULT_AI, [{ role: 'user', content: 'Tóm tắt trang web hiện tại' }])
-    ).rejects.toThrow(/không hỗ trợ yêu cầu tiếng Việt/);
-
-    expect(availability).toHaveBeenCalledWith({
+    const answer = await askAI(
+      DEFAULT_AI,
+      [{ role: 'user', content: 'Tóm tắt trang web hiện tại' }],
+      { onStatus }
+    );
+    expect(answer).toBe('Đây là tóm tắt.');
+    expect(availability).toHaveBeenNthCalledWith(1, {
       expectedInputs: [{ type: 'text', languages: ['vi'] }],
       expectedOutputs: [{ type: 'text', languages: ['vi'] }],
     });
+    expect(availability).toHaveBeenNthCalledWith(2, {
+      expectedInputs: [{ type: 'text', languages: ['en'] }],
+      expectedOutputs: [{ type: 'text', languages: ['en'] }],
+    });
+    expect(create).toHaveBeenCalledWith(expect.objectContaining({
+      expectedInputs: [{ type: 'text', languages: ['en'] }],
+      expectedOutputs: [{ type: 'text', languages: ['en'] }],
+    }));
+    expect(onStatus.mock.calls.flat().join(' ')).toContain('chế độ tương thích');
+    expect(destroy).toHaveBeenCalledOnce();
+  });
+
+  it('uses Vietnamese directly when availability advertises it', async () => {
+    const create = vi.fn().mockResolvedValue({
+      prompt: vi.fn().mockResolvedValue('Xin chào'),
+      destroy: vi.fn(),
+    });
+    const availability = vi.fn().mockResolvedValue('available');
+    vi.stubGlobal('LanguageModel', { availability, create });
+    expect(await askAI(DEFAULT_AI, [{ role: 'user', content: 'Xin chào' }])).toBe('Xin chào');
+    expect(create).toHaveBeenCalledWith(expect.objectContaining({
+      expectedInputs: [{ type: 'text', languages: ['vi'] }],
+      expectedOutputs: [{ type: 'text', languages: ['vi'] }],
+    }));
+    expect(availability).toHaveBeenCalledTimes(1);
+  });
+
+  it('reports unavailable only after checking both languages', async () => {
+    const create = vi.fn();
+    const availability = vi.fn().mockResolvedValue('unavailable');
+    vi.stubGlobal('LanguageModel', { availability, create });
+    await expect(
+      askAI(DEFAULT_AI, [{ role: 'user', content: 'Tóm tắt trang web hiện tại' }])
+    ).rejects.toThrow(/ngay cả với cấu hình tiếng Anh/);
+    expect(availability).toHaveBeenCalledTimes(2);
     expect(create).not.toHaveBeenCalled();
   });
 

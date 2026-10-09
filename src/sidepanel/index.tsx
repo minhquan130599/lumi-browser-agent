@@ -235,7 +235,7 @@ function App() {
                 setChromeStatus('Đang kiểm tra...');
                 setChromeStatus(await checkChromeAI());
               }}>Kiểm tra Chrome AI</button>
-              <p className="muted">Trạng thái: {chromeStatus}. Nếu đang tải model, có thể mất vài phút. Tiếng Việt hiện có thể không được hỗ trợ; thử tiếng Anh hoặc chọn Ollama.</p>
+              <p className="muted">Trạng thái: {chromeStatus}. Nếu Chrome không hỗ trợ tiếng Việt trực tiếp, Lumi sẽ thử cấu hình tiếng Anh như bản cũ (không bảo đảm trả lời tiếng Việt). Bạn có thể dùng Ollama/Gemini khi cần tiếng Việt ổn định.</p>
             </>
           ) : (
             <>

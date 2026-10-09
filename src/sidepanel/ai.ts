@@ -137,20 +137,39 @@ async function askChrome(
   }
 
   const lastQuestion = [...messages].reverse().find(m => m.role === 'user')?.content || '';
-  const language = HAS_VIETNAMESE_DIACRITICS.test(lastQuestion) ? 'vi' : 'en';
-  const options = modelOptions(language);
+  const isVietnamese = HAS_VIETNAMESE_DIACRITICS.test(lastQuestion);
+  let options = modelOptions(isVietnamese ? 'vi' : 'en');
 
   onStatus?.('Đang kiểm tra khả năng của Chrome Built-in AI...');
-  const status = await withDeadline(() => model.availability(options), 8000, signal, 'Kiểm tra Chrome AI');
+  let status: string;
+  try {
+    status = await withDeadline(
+      () => model.availability(options), 8000, signal, 'Kiểm tra Chrome AI'
+    );
+  } catch (error) {
+    // Unsupported language codes may reject rather than resolve to 'unavailable'.
+    // Timeouts, cancellation and unrelated API errors should still be surfaced.
+    const message = String(error);
+    if (!isVietnamese || signal?.aborted || !/not.?supported|language|unsupported/i.test(message)) {
+      throw error;
+    }
+    status = 'unavailable';
+  }
+
+  // Regression fix: before language detection was introduced, Lumi created an
+  // English-configured Chrome AI session and passed Vietnamese input through.
+  // This best-effort route is useful on some devices; it is NOT official vi support.
+  if (isVietnamese && status === 'unavailable') {
+    onStatus?.('Chrome chưa hỗ trợ tiếng Việt trực tiếp; đang thử chế độ tương thích như bản cũ...');
+    options = modelOptions('en');
+    status = await withDeadline(
+      () => model.availability(options), 8000, signal, 'Kiểm tra Chrome AI (tiếng Anh)'
+    );
+  }
 
   if (status === 'unavailable') {
-    if (language === 'vi') {
-      throw new Error(
-        'Chrome Built-in AI trên máy này không hỗ trợ yêu cầu tiếng Việt. Bạn có thể thử hỏi bằng tiếng Anh hoặc chuyển sang Ollama/Gemini/OpenAI.'
-      );
-    }
     throw new Error(
-      'Chrome Built-in AI chưa khả dụng. Kiểm tra chrome://on-device-internals, bộ nhớ máy và dung lượng ổ đĩa; hoặc chọn Ollama.'
+      'Chrome Built-in AI không khả dụng ngay cả với cấu hình tiếng Anh. Kiểm tra chrome://on-device-internals hoặc chọn Ollama/Gemini/OpenAI.'
     );
   }
   if (!['available', 'downloadable', 'downloading'].includes(status)) {
