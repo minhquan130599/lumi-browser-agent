@@ -3,7 +3,7 @@
  */
 
 export type JevProviderType = 'typesafe' | 'openrouter' | 'cloudflare';
-export type TextHelperProvider = 'openrouter' | 'deepseek' | 'openai';
+export type TextHelperProvider = 'openrouter' | 'deepseek' | 'openai' | 'ollama' | 'vllm';
 
 export interface TypeSafeConfig {
   apiKey: string;
@@ -36,6 +36,8 @@ export const TEXT_HELPER_PRESETS: Record<TextHelperProvider, { baseUrl: string; 
   openrouter: { baseUrl: 'https://openrouter.ai/api/v1', model: 'deepseek/deepseek-chat' },
   deepseek: { baseUrl: 'https://api.deepseek.com/v1', model: 'deepseek-chat' },
   openai: { baseUrl: 'https://api.openai.com/v1', model: 'gpt-4o-mini' },
+  ollama: { baseUrl: 'http://127.0.0.1:11434/v1', model: 'qwen3:8b' },
+  vllm: { baseUrl: 'http://127.0.0.1:8000/v1', model: 'your-model-id' },
 };
 
 export interface AppSettings {
@@ -272,7 +274,7 @@ export interface AgentStepLog {
   targetValue?: string;
   confidence?: number;
   latencyMs: number;
-  provider: JevProviderType;
+  provider: JevProviderType | 'browser';
   probabilities?: Record<string, number>;
   /** Independent cross-checks answered in the same request (0..1). */
   goalDone?: number;
@@ -331,6 +333,10 @@ export type ExtensionMessage =
   | { type: 'PROGRESS_UPDATE'; progress: AgentProgress }
   | { type: 'PING' }
   | { type: 'CONTENT_OBSERVE' }
+  /** Inspect or request playback only when a user explicitly asked to play video. */
+  | { type: 'CONTENT_MEDIA_STATUS' }
+  | { type: 'CONTENT_MEDIA_PLAY' }
+  | { type: 'CONTENT_MEDIA_RECT' }
   /** Whole action inside the page with synthetic events (fallback when trusted input is off). */
   | { type: 'CONTENT_ACT'; action: PageAction; text?: string }
   /** Checks, scrolls and focuses the target; returns the point for the background's trusted input. */

@@ -47,8 +47,23 @@ export interface HelperKeyStatus {
   baseUrl: string;
   model: string;
   /** Where the key comes from, or null when none is available. */
-  source: 'helper' | 'openrouter' | null;
+  source: 'helper' | 'openrouter' | 'local' | null;
   message: string;
+}
+
+/** Accept keyless OpenAI-compatible models only on loopback or private LAN. */
+function localModelUrl(baseUrl: string): boolean {
+  try {
+    const u = new URL(baseUrl);
+    if (!['http:', 'https:'].includes(u.protocol) || u.username || u.password) return false;
+    const host = u.hostname.toLowerCase();
+    if (host === 'localhost' || host === '[::1]') return true;
+    const octets = host.split('.').map(Number);
+    if (octets.length !== 4 || !octets.every(Number.isInteger) || octets.some(v => v < 0 || v > 255)) return false;
+    return octets[0] === 10 || octets[0] === 127 ||
+      (octets[0] === 192 && octets[1] === 168) ||
+      (octets[0] === 172 && octets[1] >= 16 && octets[1] <= 31);
+  } catch { return false; }
 }
 
 /** Explains which key the text helper will use for the current settings, before any request is made. */
@@ -62,6 +77,7 @@ export function describeHelperKey(settings: AppSettings): HelperKeyStatus {
   const viaOpenRouter = baseUrl.includes('openrouter.ai');
   if (own) return { provider: cfg.provider, baseUrl, model, source: 'helper', message: `Text helper uses its own key for ${model} at ${baseUrl}.` };
   if (viaOpenRouter && openrouterKey) return { provider: cfg.provider, baseUrl, model, source: 'openrouter', message: `Text helper reuses the OpenRouter key for ${model}.` };
+  if (localModelUrl(baseUrl)) return { provider: cfg.provider, baseUrl, model, source: 'local', message: `Using local model ${model} at ${baseUrl} without an API key.` };
   const hint = viaOpenRouter
     ? 'Enter an OpenRouter key in the Jev provider section or in the Text helper section.'
     : `The text helper is set to "${cfg.provider}" (${baseUrl}); the OpenRouter key is only shared for OpenRouter. Enter a key for that provider, or switch the helper provider back to OpenRouter (Reset to defaults does this).`;
@@ -87,7 +103,7 @@ export async function generateFieldText(
       : status.source === 'openrouter'
       ? (settings.openrouter.apiKey || '').trim()
       : '';
-  if (!apiKey) {
+  if (!apiKey && status.source !== 'local') {
     throw new Error(`TYPE_TEXT cannot run: ${status.message} No text is guessed by the executor.`);
   }
 
@@ -107,7 +123,7 @@ export async function generateFieldText(
 
   const json = await postJson(
     `${baseUrl}/chat/completions`,
-    { Authorization: `Bearer ${apiKey}`, ...(isOpenRouter ? OPENROUTER_HEADERS : {}) },
+    { ...(apiKey ? { Authorization: `Bearer ${apiKey}` } : {}), ...(isOpenRouter ? OPENROUTER_HEADERS : {}) },
     payload,
     { label: 'Text helper' }
   );

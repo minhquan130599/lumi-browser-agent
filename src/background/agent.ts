@@ -3,6 +3,8 @@ import { activeJevModel, callJevProvider } from '../shared/providers';
 import { createFieldContext, generateFieldText } from '../shared/text-helper';
 import { suggestSwaggerGetOperation } from '../shared/swagger-support';
 import { isLocalSystemOneEndpoint, toLocalSystemOneRequest } from '../shared/providers/local-systemone';
+import { isYoutubeResultPage, isYoutubeWatchPage, parseNavigationIntent, type NavigationIntent } from '../shared/navigation-intent';
+import { suggestYoutubeVideo } from '../shared/youtube-support';
 import {
   ActResult,
   AgentProgress,
@@ -100,6 +102,10 @@ export class AgentRunner {
   private runToken = 0;
   private runStartedAt = 0;
   private decisionAbort: AbortController | null = null;
+  private navigationIntent: NavigationIntent | null = null;
+  private youtubeVideoFallbackUsed = false;
+  private youtubePlayAttempted = false;
+  private youtubeWaits = 0;
 
   private lastFingerprint: string | null = null;
   private lastSummary: PageSummary | null = null;
@@ -187,6 +193,10 @@ export class AgentRunner {
     this.decisionAbort = null;
     this.runStartedAt = Date.now();
     this.activeTabId = tabId;
+    this.navigationIntent = parseNavigationIntent(goal);
+    this.youtubeVideoFallbackUsed = false;
+    this.youtubePlayAttempted = false;
+    this.youtubeWaits = 0;
     this.history = [];
     this.lastFingerprint = null;
     this.lastSummary = null;
@@ -219,14 +229,71 @@ export class AgentRunner {
     };
   }
 
+  /**
+   * Navigate only to a destination explicitly named by the user, before Jev
+   * observes the page. A model cannot invent this URL from site content.
+   */
+  private async applyInitialNavigation(token: number): Promise<boolean> {
+    const intent = this.navigationIntent;
+    const tabId = this.activeTabId;
+    if (!intent || tabId === null) return false;
+
+    const current = await chrome.tabs.get(tabId);
+    if (current.url === intent.url) return false;
+    const started = Date.now();
+    this.setPhase('acting');
+    this.sendStatus({ text: intent.searchQuery
+      ? `Opening YouTube search for "${intent.searchQuery}"...`
+      : `Opening ${intent.hostname}...` });
+    await this.input.detach();
+    await chrome.tabs.update(tabId, { url: intent.url });
+    await this.waitForTabToLoad(tabId);
+    if (token !== this.runToken) return false;
+
+    const arrived = await chrome.tabs.get(tabId);
+    if (!arrived.url) throw new Error('The destination has no URL after navigation.');
+    const actual = new URL(arrived.url);
+    const requested = new URL(intent.url);
+    // Only mark the planned navigation as successful on the correct site.
+    const matchingSite = actual.hostname === requested.hostname ||
+      (intent.searchQuery && ['youtube.com', 'www.youtube.com', 'm.youtube.com'].includes(actual.hostname));
+    if (!matchingSite) throw new Error(`Navigation redirected to another site: ${actual.hostname}`);
+
+    this.progress.currentStep++;
+    this.recordTime('actionMs', Date.now() - started);
+    this.addLog({
+      step: this.progress.currentStep,
+      operation: intent.searchQuery ? 'SEARCH (navigate)' : 'NAVIGATE',
+      targetLabel: arrived.url,
+      timestamp: Date.now(),
+      provider: 'browser',
+      latencyMs: Date.now() - started,
+    });
+    this.broadcastUpdate();
+    return true;
+  }
+
   public async start(goal: string, tabId: number): Promise<void> {
     if (this.progress.status === 'running') return;
     this.reset(goal, tabId);
+    const token = this.runToken;
     this.broadcastUpdate();
     const startup = Date.now();
-    await this.attachInput(tabId);
-    this.recordTime('startupMs', Date.now() - startup);
-    await this.loop(this.runToken);
+    try {
+      await this.applyInitialNavigation(token);
+      if (token !== this.runToken) return;
+      if (this.navigationIntent?.navigationOnly) {
+        this.finish('done');
+        return;
+      }
+      await this.attachInput(tabId);
+      this.recordTime('startupMs', Date.now() - startup);
+      await this.loop(token);
+    } catch (error: any) {
+      if (token === this.runToken) {
+        this.finish('error', `Navigation/startup failed: ${error?.message || String(error)}`);
+      }
+    }
   }
 
   /** Executes exactly one step. A new goal, or a finished run, starts over; a paused run continues. */
@@ -248,14 +315,35 @@ export class AgentRunner {
 
     this.broadcastUpdate();
     const startup = Date.now();
-    await this.attachInput(tabId);
-    this.recordTime('startupMs', Date.now() - startup);
-    const cont = await this.executeOneStep(token);
-    if (token === this.runToken && this.progress.status === 'running') {
-      this.progress.status = cont ? 'paused' : 'idle';
+    try {
+      if (!continuing) {
+        const navigated = await this.applyInitialNavigation(token);
+        if (token !== this.runToken) return;
+        if (this.navigationIntent?.navigationOnly) {
+          this.finish('done');
+          return;
+        }
+        // A single-step request performs either navigation or a page action,
+        // never both in one click of the Step button.
+        if (navigated) {
+          this.progress.status = 'paused';
+          this.broadcastUpdate();
+          return;
+        }
+      }
+      await this.attachInput(tabId);
+      this.recordTime('startupMs', Date.now() - startup);
+      const cont = await this.executeOneStep(token);
+      if (token === this.runToken && this.progress.status === 'running') {
+        this.progress.status = cont ? 'paused' : 'idle';
+      }
+      if (this.progress.status !== 'running') void this.input.detach();
+      this.broadcastUpdate();
+    } catch (error: any) {
+      if (token === this.runToken) {
+        this.finish('error', `Navigation/startup failed: ${error?.message || String(error)}`);
+      }
     }
-    if (this.progress.status !== 'running') void this.input.detach();
-    this.broadcastUpdate();
   }
 
   public stop(): void {
@@ -360,6 +448,151 @@ export class AgentRunner {
   }
 
   /**
+   * A YouTube music task is complete only if the actual HTML video is playing.
+   * DOM inspection and playback are limited to YouTube watch pages and an
+   * explicit user request to play. We never assume that opening a result = play.
+   */
+  private async verifyYoutubePlayback(tabId: number, snapshot: PageSnapshot, token: number): Promise<boolean | null> {
+    const intent = this.navigationIntent;
+    if (!intent?.searchQuery || !isYoutubeWatchPage(snapshot.url)) return null;
+    if (!intent.playVideo) {
+      this.finish('done');
+      return false;
+    }
+
+    const media = await chrome.tabs.sendMessage(tabId, { type: 'CONTENT_MEDIA_STATUS' })
+      .catch(() => null) as { found?: boolean; playing?: boolean; paused?: boolean } | null;
+    if (token !== this.runToken) return false;
+    if (media?.playing) {
+      this.addLog({
+        step: this.progress.currentStep, timestamp: Date.now(),
+        operation: 'VERIFY_PLAYING', targetLabel: 'YouTube video is playing',
+        provider: 'browser', latencyMs: 0,
+      });
+      this.finish('done');
+      return false;
+    }
+
+    if (!media?.found) {
+      if (++this.youtubeWaits <= 8) {
+        this.setPhase('waiting');
+        await new Promise(resolve => setTimeout(resolve, 400));
+        return true;
+      }
+      this.finish('blocked', 'YouTube watch page loaded, but no HTML video element appeared. Check sign-in, consent or page loading.');
+      return false;
+    }
+    if (!this.youtubePlayAttempted) {
+      this.youtubePlayAttempted = true;
+      this.setPhase('acting');
+      const start = Date.now();
+      const button = snapshot.actions.find(a =>
+        a.kind === 'click' && a.role === 'button' &&
+        /^(?:play|phát|bật video|resume)(?:\s|$|\()/iu.test(a.label.trim())
+      );
+      let ok = false;
+      let reason = '';
+      try {
+        if (button) {
+          const result = await this.act(tabId, button);
+          ok = result.ok;
+          if (!result.ok) reason = result.message;
+        } else {
+          // Prefer a trusted mouse click on the unobstructed video surface;
+          // it carries genuine user activation. Synthetic video.play() often
+          // fails with Chrome's autoplay policy even when the user asked to play.
+          if (this.settings.trustedInput && this.input.attachedTab !== tabId) {
+            await this.attachInput(tabId);
+          }
+          if (this.input.attachedTab === tabId) {
+            const point = await chrome.tabs.sendMessage(tabId, { type: 'CONTENT_MEDIA_RECT' })
+              .catch(() => null) as { safe?: boolean; x?: number; y?: number } | null;
+            if (point?.safe && typeof point.x === 'number' && typeof point.y === 'number') {
+              await this.input.click(point.x, point.y);
+              ok = true;
+            }
+          }
+          if (!ok) {
+            const result = await chrome.tabs.sendMessage(tabId, { type: 'CONTENT_MEDIA_PLAY' });
+            ok = result?.success === true;
+            reason = result?.error || '';
+          }
+        }
+      } catch (error: any) {
+        reason = error?.message || String(error);
+      }
+      this.recordTime('actionMs', Date.now() - start);
+      if (token !== this.runToken) return false;
+      if (!ok) {
+        this.finish('blocked', 'Could not start YouTube playback' + (reason ? ': ' + reason : '') +
+          '. The browser may require a direct user gesture.');
+        return false;
+      }
+      this.progress.currentStep++;
+      this.addLog({ step: this.progress.currentStep, timestamp: Date.now(),
+        operation: 'PLAY_VIDEO', targetLabel: 'YouTube player', provider: 'browser', latencyMs: Date.now() - start });
+      this.broadcastUpdate();
+      this.youtubeWaits = 0;
+      return true;
+    }
+
+    if (++this.youtubeWaits <= 4) {
+      this.setPhase('waiting');
+      await new Promise(resolve => setTimeout(resolve, 300));
+      return true;
+    }
+    this.finish('blocked', 'YouTube video is still paused after the play attempt. Click Play manually; autoplay may be restricted.');
+    return false;
+  }
+
+  private async openYoutubeResult(tabId: number, snapshot: PageSnapshot, token: number): Promise<boolean | null> {
+    const intent = this.navigationIntent;
+    if (!intent?.searchQuery || !isYoutubeResultPage(snapshot.url) || this.youtubeVideoFallbackUsed) return null;
+    const action = suggestYoutubeVideo(snapshot, intent.searchQuery);
+    if (!action) return null;
+
+    this.youtubeVideoFallbackUsed = true;
+    this.setPhase('acting');
+    const start = Date.now();
+    this.sendStatus({ text: 'Opening a matching YouTube video from search results...' });
+    let navigated = false;
+    try {
+      const result = await this.act(tabId, action);
+      if (!result.ok) {
+        this.finish('blocked', 'Could not open the YouTube video result: ' + result.message);
+        return false;
+      }
+    } catch (error: any) {
+      if (!isNavigationError(error?.message || String(error))) {
+        this.finish('blocked', 'Could not open YouTube video: ' + (error?.message || String(error)));
+        return false;
+      }
+      navigated = true;
+    }
+    this.recordTime('actionMs', Date.now() - start);
+    if (token !== this.runToken) return false;
+    this.history.push({
+      step: this.progress.currentStep + 1,
+      action: 'CLICK ' + action.label,
+      kind: 'click',
+      page_changed: undefined,
+    });
+    this.progress.currentStep++;
+    this.lastTargetActionId = action.id;
+    this.addLog({
+      step: this.progress.currentStep, timestamp: Date.now(),
+      operation: 'CLICK (YouTube recovery)',
+      targetId: action.id, targetLabel: action.label,
+      latencyMs: Date.now() - start, provider: 'browser',
+    });
+    this.broadcastUpdate();
+    if (navigated || (await chrome.tabs.get(tabId).catch(() => null))?.status === 'loading') {
+      await this.waitForTabToLoad(tabId);
+    }
+    return true;
+  }
+
+  /**
    * One observe → decide → act cycle. Returns false when the run has ended.
    * A stale decision is discarded and the page is observed again without recording a step.
    */
@@ -403,6 +636,19 @@ export class AgentRunner {
       candidateLabels: [...new Set(interactiveActions.map((a) => a.label))].slice(0, 12),
     };
     this.broadcastUpdate();
+
+    // YouTube loads results asynchronously. Avoid giving an empty page to the
+    // small Jev model and immediately receiving a false BLOCKED decision.
+    if (this.navigationIntent?.searchQuery && isYoutubeResultPage(snapshot.url)) {
+      if (!suggestYoutubeVideo(snapshot, this.navigationIntent.searchQuery) && this.youtubeWaits++ < 5) {
+        this.setPhase('waiting');
+        await new Promise(resolve => setTimeout(resolve, 400));
+        return token === this.runToken;
+      }
+      this.youtubeWaits = 0;
+    }
+    const playbackResult = await this.verifyYoutubePlayback(tabId, snapshot, token);
+    if (playbackResult !== null) return playbackResult;
 
     // 2. Resolve what the previous action did and detect deadlocks
     const summary = summarize(snapshot);
@@ -480,7 +726,7 @@ export class AgentRunner {
     const { request, actionSpace } = buildJevRequest(
       activeJevModel(this.settings),
       snapshot,
-      this.progress.goal,
+      this.navigationIntent?.modelGoal || this.progress.goal,
       this.history,
       { warning, suppressedTargetIds },
       { start_url: this.startUrl, steps_taken: this.history.length, visited_urls: this.visitedUrls.slice(-6) }
@@ -531,6 +777,18 @@ export class AgentRunner {
     const goalDone = readNoul(jevResponse.answers?.goal_done);
     const stuck = readNoul(jevResponse.answers?.stuck);
 
+    // A YouTube search-results page is not evidence that the requested music
+    // is playing. If the decision model says DONE here, use a verified video
+    // result link instead of falsely marking the task complete.
+    if (operation === 'DONE' && this.navigationIntent?.searchQuery && isYoutubeResultPage(snapshot.url)) {
+      const recovery = await this.openYoutubeResult(tabId, snapshot, token);
+      if (recovery !== null) return recovery;
+      this.vetoed = 'DONE';
+      this.lastStaleNotice = 'The user requested a video; search results alone are not DONE. Open a /watch?v= video.';
+      this.broadcastUpdate();
+      return true;
+    }
+
     if (operation === 'DONE' && goalDone !== undefined && goalDone < GOAL_DONE_MIN) {
       this.vetoed = 'DONE';
       this.lastStaleNotice = `ATTENTION: DONE was proposed, but the independent goal check says the task is not achieved yet (probability ${goalDone.toFixed(2)}). Something in the task is still missing; act on it.`;
@@ -576,6 +834,18 @@ export class AgentRunner {
       this.broadcastUpdate();
       this.sendStatus({ text: 'Checking initial BLOCKED decision...', latencyMs });
       return true;
+    }
+
+    if (
+      operation === 'BLOCKED' &&
+      this.initialBlockReviewed &&
+      this.navigationIntent?.searchQuery &&
+      isYoutubeResultPage(snapshot.url)
+    ) {
+      const recovery = await this.openYoutubeResult(tabId, snapshot, token);
+      if (recovery !== null) return recovery;
+      this.finish('blocked', 'YouTube search completed, but no playable video result link is currently visible. Try reloading the results or refining the search.');
+      return false;
     }
 
     if (

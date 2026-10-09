@@ -2,7 +2,7 @@
 
 Lumi Browser AI is a Chrome Manifest V3 extension with a dark companion-style **Side Panel**, chat about the active web page, multiple LLM providers, and an existing Jev-powered browser automation engine.
 
-> **Prototype / early development.** TypeScript checking, unit tests and Vite build have been exercised in the workspace. Real Chrome, AI-provider, and end-to-end browser control scenarios still need validation. Remote mobile chat has **not** been implemented yet.
+> **Prototype / early development.** TypeScript/unit tests and Vite build run successfully. A Chromium end-to-end smoke test covers navigation → YouTube search → one video click → actual HTML video playback, using **mocked YouTube pages and a mock Jev server**. Live YouTube, provider accuracy and other real websites still require validation. Remote mobile chat has **not** been implemented yet.
 
 ## Features
 
@@ -76,11 +76,21 @@ Trong Lumi: provider `Ollama`, base URL `http://127.0.0.1:11434/v1`, model `qwen
 
 1. Mở trang web cần thao tác.
 2. Vào bánh răng → **Cài đặt Jev / Text helper**.
-3. Chọn và cấu hình **Jev provider**, ví dụ OpenRouter hoặc TypeSafe; sau đó cấu hình **Text helper** có hỗ trợ OpenAI-compatible API.
+3. Chọn và cấu hình **Jev provider**, ví dụ OpenRouter, TypeSafe hoặc SystemOne local. Đối với thao tác nhập liệu trên website tùy ý, cấu hình **Text helper**; bạn có thể chọn **Ollama local** hoặc **vLLM local** với endpoint OpenAI-compatible trong mạng riêng, không cần API key nếu server không yêu cầu.
 4. Quay lại Side Panel → tab **Agent Jev** → nhập mục tiêu rồi gửi.
 5. Theo dõi tiến trình và bấm **Dừng Agent** nếu cần.
 
-Bật quyền Chrome Debugger cho input được tin cậy nếu bạn đồng ý với quyền này. Repo Jev gốc hỗ trợ các thao tác DOM như click, điền, select, scroll; chưa hỗ trợ mọi iframe, shadow DOM hoặc canvas. Người dùng phải xác nhận những thao tác nhạy cảm trước khi chạy và luôn kiểm tra kết quả.
+Bật **Trusted Input** trong Jev Settings nếu bạn đồng ý cho Lumi dùng Chrome Debugger. Đây là cách thực hiện click giống người dùng, đặc biệt cần thiết khi Chrome yêu cầu user gesture để phát video. Repo Jev gốc hỗ trợ các thao tác DOM như click, điền, select, scroll; chưa hỗ trợ mọi iframe, shadow DOM hoặc canvas. Người dùng phải xác nhận những thao tác nhạy cảm trước khi chạy và luôn kiểm tra kết quả.
+
+### Mở website và phát nhạc YouTube
+
+Lumi hiện nhận diện URL/hostname **được người dùng nói rõ** trong câu lệnh `mở ...`, `vào ...`, `open ...` hoặc `go to ...`. Nó điều hướng tab hiện tại bằng Chrome API **trước khi hỏi Jev**, thay vì đòi Jev click một nút không tồn tại trên trang cũ. Lệnh ví dụ:
+
+`mở youtube.com tìm 1 bản nhạc thiếu nhi và bật cho tôi`
+
+Với mẫu lệnh này, Lumi điều hướng trực tiếp tới YouTube search results, vì vậy không cần gọi Text Helper chỉ để nhập từ khóa. Jev chọn video từ kết quả thực tế; nếu Jev báo `BLOCKED` dù vẫn có một link `/watch?v=...` phù hợp, Lumi có nhánh dự phòng chỉ click một video hợp lệ trong trang kết quả YouTube. Trên trang xem, Lumi quan sát `<video>`, thử bấm Play (ưu tiên Chrome Debugger trusted input khi cần) và **chỉ báo DONE khi trạng thái video là playing**. Nếu gặp hạn chế autoplay, lỗi tải nội dung, đăng nhập hoặc lời nhắc chấp thuận, Lumi sẽ thông báo rõ và có thể cần bạn thao tác thủ công.
+
+Bộ phát hiện tên miền không biến Lumi thành agent đa trang cho mọi kiểu yêu cầu gián tiếp: cần chỉ rõ trang đích hoặc trang đã mở; các tác vụ web phức tạp hơn vẫn phụ thuộc Jev/LLM planner. Việc mở nhạc đã được kiểm thử bằng **Chromium + mock YouTube/decision server**, chưa phải bài test trên YouTube live. Cần bật **Trusted Input** để đảm bảo các sự kiện click có user activation khi Chrome yêu cầu.
 
 ### Swagger UI và BLOCKED 0/30
 
@@ -124,6 +134,10 @@ The default Step Delay for new installations is now 75 ms (previously 300 ms). F
 Run `npm run build`, then `npx playwright install chromium` if Playwright Chromium is missing, and `npx tsx scripts/benchmark-agent.ts`. The benchmark launches an isolated temporary Chromium profile and a local mock Jev server. It tests one click followed by a DONE decision, comparing step delays of 300 ms, 75 ms and 0 ms. It does **not** measure OpenRouter/TypeSafe network performance or the installed Waifu Agent. You may set `CHROMIUM_PATH` to an existing Chromium-for-testing executable to avoid downloading another copy.
 
 For provider-specific latency, open **Jev Settings**, click **Test OpenRouter Decisions API** or **Test TypeSafe API**, and compare the elapsed time. Use the same task and time window. Direct TypeSafe may respond faster depending on route and load, but results vary.
+
+### Multi-step browser navigation smoke test
+
+After `npm run build`, run `npx playwright install chromium` if needed, then `npx tsx scripts/e2e-youtube.ts`. The script uses an **isolated temporary Chromium profile**, a local mock decision API deliberately returning `BLOCKED`, and intercepted **mock YouTube pages** with synthetic media. It verifies that Lumi navigates, selects a result, starts an HTML video with trusted input and reports DONE only when playing. This test does not visit real YouTube or call any paid model.
 
 ## Commands
 

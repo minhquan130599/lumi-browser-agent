@@ -331,6 +331,8 @@ export const Options: React.FC = () => {
                 <option value="openrouter">OpenRouter (Default)</option>
                 <option value="deepseek">DeepSeek</option>
                 <option value="openai">OpenAI / Compatible API</option>
+                <option value="ollama">Ollama local</option>
+                <option value="vllm">vLLM local</option>
               </select>
             </div>
 

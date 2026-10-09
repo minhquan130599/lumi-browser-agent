@@ -55,6 +55,57 @@ function boot(): void {
           return false;
         }
 
+        case 'CONTENT_MEDIA_STATUS': {
+          const video = document.querySelector('video');
+          sendResponse({
+            found: Boolean(video),
+            playing: Boolean(video && !video.paused && !video.ended),
+            paused: Boolean(video?.paused),
+            readyState: video?.readyState ?? 0,
+          });
+          return false;
+        }
+
+        case 'CONTENT_MEDIA_RECT': {
+          const video = document.querySelector('video');
+          const rect = video?.getBoundingClientRect();
+          if (!video || !rect || rect.width < 20 || rect.height < 20) {
+            sendResponse({ found: false });
+            return false;
+          }
+          const x = rect.x + rect.width / 2;
+          const y = rect.y + rect.height / 2;
+          const top = document.elementFromPoint(x, y);
+          // Never click a player overlay link or advertisement instead of the video.
+          const safe = top === video && x >= 0 && y >= 0 &&
+            x < window.innerWidth && y < window.innerHeight;
+          sendResponse({ found: true, safe, x, y });
+          return false;
+        }
+
+        case 'CONTENT_MEDIA_PLAY': {
+          const video = document.querySelector('video');
+          if (!video) {
+            sendResponse({ success: false, error: 'No video element has loaded yet' });
+            return false;
+          }
+          let timer: number | undefined;
+          const timeout = new Promise<never>((_, reject) => {
+            timer = window.setTimeout(() => reject(new Error('Timed out waiting for the video to start.')), 8000);
+          });
+          Promise.race([video.play(), timeout])
+            .then(() => sendResponse({
+              success: !video.paused && !video.ended,
+              playing: !video.paused && !video.ended,
+            }))
+            .catch(error => sendResponse({
+              success: false,
+              error: error?.message || String(error),
+            }))
+            .finally(() => window.clearTimeout(timer));
+          return true;
+        }
+
         case 'CONTENT_OBSERVE': {
           try {
             const snapshot = takeSnapshot();

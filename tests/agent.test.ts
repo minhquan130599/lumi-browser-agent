@@ -66,7 +66,7 @@ function installChrome(page: Page) {
   const chromeMock = {
     tabs: {
       get: vi.fn(async () => ({ id: 7, url: 'https://example.com/', status: 'complete' })),
-      sendMessage: vi.fn(async (_tabId: number, msg: any) => {
+      sendMessage: vi.fn(async (_tabId: number, msg: any): Promise<any> => {
         page.sent.push(msg);
         switch (msg.type) {
           case 'PING':
@@ -82,7 +82,7 @@ function installChrome(page: Page) {
       onUpdated: { addListener: vi.fn(), removeListener: vi.fn() },
       onCreated: { addListener: vi.fn((fn: any) => { created.push(fn); }) },
       onRemoved: { addListener: vi.fn((fn: any) => { removed.push(fn); }) },
-      update: vi.fn(async () => ({})),
+      update: vi.fn(async (_id: number, _changes: any): Promise<any> => ({})),
       query: vi.fn(),
     },
     scripting: { executeScript: vi.fn() },
@@ -131,6 +131,113 @@ describe('AgentRunner', () => {
     expect(r.getProgress().status).toBe('done');
     expect(r.getProgress().currentStep).toBe(1);
     expect(page.sent.filter(m => m.type === 'CONTENT_ACT')).toHaveLength(1);
+  });
+
+  it('navigates to a user-requested domain without consulting Jev', async () => {
+    const chromeMock = installChrome(page);
+    let currentUrl = 'https://www.google.com/search?q=ollama';
+    chromeMock.tabs.get.mockImplementation(async () =>
+      ({ id: 7, url: currentUrl, status: 'complete' } as any));
+    chromeMock.tabs.update.mockImplementation(async (_id: number, change: any) => {
+      currentUrl = change.url;
+      return { id: 7, url: currentUrl, status: 'complete' };
+    });
+    const r = runner();
+    await r.start('hãy mở github.com', 7);
+    expect(chromeMock.tabs.update).toHaveBeenCalledWith(7, { url: 'https://github.com/' });
+    expect(r.getProgress().status).toBe('done');
+    expect(r.getProgress().logs[0].operation).toBe('NAVIGATE');
+    expect(jev).not.toHaveBeenCalled();
+  });
+
+  it('opens YouTube search, recovers from two false BLOCKED decisions, and verifies playback', async () => {
+    const chromeMock = installChrome(page);
+    let currentUrl = 'https://www.google.com/search?q=ollama';
+    let playing = false;
+    const resultAction: PageAction = {
+      id: 'music', node: 3, kind: 'click', role: 'link',
+      label: 'Nhạc Thiếu Nhi Vui Nhộn Cho Bé',
+      href: '/watch?v=childrenmusic',
+    };
+    chromeMock.tabs.get.mockImplementation(async () =>
+      ({ id: 7, url: currentUrl, status: 'complete' } as any));
+    chromeMock.tabs.update.mockImplementation(async (_id: number, change: any) => {
+      currentUrl = change.url;
+      page.snapshot = snapshot({
+        url: currentUrl,
+        title: 'YouTube search results',
+        text: 'Nhạc Thiếu Nhi Vui Nhộn Cho Bé',
+        actions: [
+          { id: 'menu', node: 1, kind: 'click', role: 'button', label: 'YouTube menu' },
+          resultAction,
+          { id: 'wait', kind: 'wait', label: 'Wait' },
+        ],
+      });
+      return { id: 7, url: currentUrl, status: 'complete' };
+    });
+    const original = chromeMock.tabs.sendMessage.getMockImplementation()!;
+    chromeMock.tabs.sendMessage.mockImplementation(async (_tabId: number, message: any) => {
+      if (message.type === 'CONTENT_MEDIA_STATUS') {
+        return { found: true, playing, paused: !playing };
+      }
+      if (message.type === 'CONTENT_MEDIA_PLAY') {
+        playing = true;
+        return { success: true, playing: true };
+      }
+      return original(_tabId, message);
+    });
+    page.act = (action) => {
+      expect(action.id).toBe('music');
+      currentUrl = 'https://www.youtube.com/watch?v=childrenmusic';
+      page.snapshot = snapshot({
+        url: currentUrl,
+        title: 'Nhạc thiếu nhi - YouTube',
+        text: 'Nhạc thiếu nhi đang được phát',
+        actions: [{ id: 'wait', kind: 'wait', label: 'Wait' }],
+      });
+      return { ok: true, via: 'synthetic' };
+    };
+    jev.mockResolvedValue(answer('BLOCKED'));
+
+    const r = runner();
+    await r.start('mở youtube.com tìm 1 bản nhạc thiếu nhi và bật cho tôi', 7);
+    expect(chromeMock.tabs.update).toHaveBeenCalledWith(7, {
+      url: 'https://www.youtube.com/results?search_query=nh%E1%BA%A1c+thi%E1%BA%BFu+nhi',
+    });
+    expect(r.getProgress().status).toBe('done');
+    expect(r.getProgress().currentStep).toBe(3);
+    expect(r.getProgress().logs.map(entry => entry.operation)).toContain('SEARCH (navigate)');
+    expect(r.getProgress().logs.map(entry => entry.operation)).toContain('CLICK (YouTube recovery)');
+    expect(r.getProgress().logs.map(entry => entry.operation)).toContain('PLAY_VIDEO');
+    expect(r.getProgress().logs[0].operation).toBe('VERIFY_PLAYING');
+    expect(chromeMock.tabs.sendMessage).toHaveBeenCalledWith(7, { type: 'CONTENT_MEDIA_PLAY' });
+    expect(jev).toHaveBeenCalledTimes(2);
+  });
+
+  it('does not claim completion when the YouTube player refuses playback', async () => {
+    const chromeMock = installChrome(page);
+    let currentUrl = 'https://www.google.com/';
+    chromeMock.tabs.get.mockImplementation(async () =>
+      ({ id: 7, url: currentUrl, status: 'complete' } as any));
+    chromeMock.tabs.update.mockImplementation(async (_id: number, _change: any) => {
+      currentUrl = 'https://www.youtube.com/watch?v=childrenmusic';
+      page.snapshot = snapshot({
+        url: currentUrl, title: 'Video', text: 'Video',
+        actions: [{ id: 'wait', kind: 'wait', label: 'Wait' }],
+      });
+      return { id: 7, url: currentUrl, status: 'complete' };
+    });
+    const original = chromeMock.tabs.sendMessage.getMockImplementation()!;
+    chromeMock.tabs.sendMessage.mockImplementation(async (tabId: number, message: any) => {
+      if (message.type === 'CONTENT_MEDIA_STATUS') return { found: true, paused: true, playing: false };
+      if (message.type === 'CONTENT_MEDIA_PLAY') return { success: false, error: 'NotAllowedError: user gesture required' };
+      return original(tabId, message);
+    });
+    const r = runner();
+    await r.start('mở youtube.com tìm nhạc thiếu nhi và bật cho tôi', 7);
+    expect(r.getProgress().status).toBe('blocked');
+    expect(r.getProgress().lastError).toContain('user gesture required');
+    expect(jev).not.toHaveBeenCalled();
   });
 
   it('finishes with DONE without executing anything', async () => {
