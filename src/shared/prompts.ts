@@ -13,6 +13,7 @@ Submit populated search fields before opening a result; a populated field alone 
 PRESS_ENTER submits the focused text field; use it when a typed query has no Search/Submit button
 or matching suggestion to click. WAIT only when the needed control is absent/disabled, or submitted results are still loading.
 If Search/Submit is visible and the required fields are ready, CLICK it immediately.
+On Swagger/OpenAPI documentation, a matching collapsed GET operation is a valid next step: open its section, then use Try it out and Execute if requested, and read the response. A visible matching GET operation is not BLOCKED.
 Recent WAIT actions are not evidence of loading. Prefer a useful visible control over WAIT.
 DONE requires visible evidence in \`page.text\` and \`page.url\` that ALL requirements of \`task\` are
 satisfied. If asked to open a result, a matching link is not enough. BLOCKED means no supported

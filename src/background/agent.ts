@@ -1,6 +1,7 @@
 import { buildJevRequest, validateChoiceAnswer } from '../shared/action-space';
 import { activeJevModel, callJevProvider } from '../shared/providers';
 import { createFieldContext, generateFieldText } from '../shared/text-helper';
+import { suggestSwaggerGetOperation } from '../shared/swagger-support';
 import {
   ActResult,
   AgentProgress,
@@ -441,6 +442,12 @@ export class AgentRunner {
       this.finish('blocked', 'Reached the model-call budget for this run.');
       return false;
     }
+    const swaggerSuggestion = this.history.length === 0
+      ? suggestSwaggerGetOperation(snapshot, this.progress.goal)
+      : null;
+    if (swaggerSuggestion && !warning) {
+      warning = `Swagger API hint: ${swaggerSuggestion.hint} A visible GET route is a valid next step; BLOCKED is premature when it can be opened.`;
+    }
     const { request, actionSpace } = buildJevRequest(
       activeJevModel(this.settings),
       snapshot,
@@ -498,14 +505,13 @@ export class AgentRunner {
       operation === 'BLOCKED' &&
       this.history.length === 0 &&
       !this.initialBlockReviewed &&
-      operationAnswer.confidence >= TERMINAL_CONFIRM_THRESHOLD &&
       (interactiveActions.length > 0 || this.progress.observation?.scrollDownAvailable)
     ) {
       // Jev can prematurely say BLOCKED on collapsed API docs even when useful navigation
       // is available. Ask for a second opinion, but retain BLOCKED as a valid choice:
       // we must not force a random or potentially destructive click.
       this.initialBlockReviewed = true;
-      const example = (this.progress.observation?.candidateLabels || []).slice(0, 6).join(', ');
+      const example = swaggerSuggestion?.action.label || (this.progress.observation?.candidateLabels || []).slice(0, 6).join(', ');
       this.lastStaleNotice =
         `RECHECK FIRST-STEP BLOCKED: no browser action was attempted yet. ` +
         `Visible controls include: ${example || '(no buttons)'}. ` +
@@ -527,8 +533,60 @@ export class AgentRunner {
       return true;
     }
 
+    if (
+      operation === 'BLOCKED' &&
+      this.history.length === 0 &&
+      this.initialBlockReviewed &&
+      swaggerSuggestion
+    ) {
+      // A specific, matching Swagger GET accordion is visible. Opening it
+      // changes the documentation UI only; never click Try it out / Execute
+      // via this fallback, and never use it for POST/PATCH/DELETE operations.
+      const action = swaggerSuggestion.action;
+      this.sendStatus({ text: 'Opening Swagger documentation for ' + swaggerSuggestion.path, latencyMs });
+      try {
+        const result = await this.act(tabId, action);
+        if (token !== this.runToken) return false;
+        if (!result.ok) {
+          this.finish('blocked', 'Could not open Swagger GET ' + swaggerSuggestion.path + ': ' + result.message);
+          return false;
+        }
+      } catch (error: any) {
+        this.finish('blocked', 'Could not open Swagger GET ' + swaggerSuggestion.path + ': ' +
+          (error?.message || String(error)));
+        return false;
+      }
+      this.history.push({
+        step: 1,
+        action: 'CLICK ' + action.label,
+        kind: 'click',
+        page_changed: undefined,
+      });
+      this.progress.currentStep = 1;
+      this.lastTargetActionId = action.id;
+      this.pendingTerminal = null;
+      this.lastStaleNotice =
+        'A matching Swagger GET endpoint section was clicked. Inspect the updated page. ' +
+        'If the section is open and the user asked to test it, proceed with "Try it out" ' +
+        'and then "Execute" when available. Never assume the API call already occurred.';
+      this.addLog({
+        step: 1,
+        timestamp: Date.now(),
+        operation: 'CLICK (safe Swagger fallback)',
+        targetId: action.id,
+        targetLabel: action.label,
+        latencyMs,
+        provider,
+        probabilities: operationAnswer.probabilities,
+        goalDone,
+        stuck,
+      });
+      this.broadcastUpdate();
+      return true;
+    }
+
     if (operation === 'DONE' || operation === 'BLOCKED') {
-      if (operationAnswer.confidence < TERMINAL_CONFIRM_THRESHOLD && this.pendingTerminal !== operation) {
+      if (operationAnswer.confidence < TERMINAL_CONFIRM_THRESHOLD && this.pendingTerminal !== operation && !(operation === 'BLOCKED' && this.initialBlockReviewed)) {
         // A hesitant verdict gets one more look after the page settles; only a repeat ends the run.
         this.pendingTerminal = operation;
         this.sendStatus({ text: operation === 'DONE' ? 'Checking whether the task is complete…' : 'Checking for another way forward…', latencyMs });

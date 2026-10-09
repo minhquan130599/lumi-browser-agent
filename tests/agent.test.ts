@@ -157,6 +157,60 @@ describe('AgentRunner', () => {
     expect(page.sent.filter(message => message.type === 'CONTENT_ACT')).toHaveLength(0);
   });
 
+  it('opens an explicitly requested Swagger GET accordion after two premature low-confidence BLOCKED decisions', async () => {
+    page.snapshot = snapshot({
+      url: 'http://127.0.0.1:8002/docs#/',
+      title: 'VieNeu Remote TTS - Swagger UI',
+      text: 'GET /v1/health GET /v1/voices',
+      actions: [
+        { id: 'e1', node: 1, role: 'button', kind: 'click', label: 'GET /v1 /health Health' },
+        { id: 'e2', node: 2, role: 'button', kind: 'click', label: 'GET /v1 /voices Voices' },
+        { id: 'e3', node: 3, role: 'button', kind: 'click', label: 'get /v1/voices' },
+        { id: 'scroll_down', kind: 'scroll', label: 'Scroll down', delta: 560 },
+        { id: 'wait', kind: 'wait', label: 'Wait for the page to update' },
+      ],
+    });
+
+    const uncertainBlocked = {
+      model: 'test-model',
+      answers: {
+        operation: {
+          choice: 'BLOCKED',
+          confidence: 0.07,
+          probabilities: { BLOCKED: 0.60, CLICK: 0.40 },
+        },
+        stuck: { type: 'noul', noul: 0.79 },
+      },
+    };
+    jev.mockResolvedValueOnce(uncertainBlocked)
+      .mockResolvedValueOnce(uncertainBlocked)
+      .mockResolvedValueOnce(answer('DONE'));
+
+    page.act = (action) => {
+      expect(action.label).toBe('GET /v1 /voices Voices');
+      page.snapshot = snapshot({
+        ...page.snapshot,
+        text: 'GET /v1/voices Voices Try it out',
+        actions: [
+          { id: 'e1', node: 1, role: 'button', kind: 'click', label: 'Try it out' },
+          { id: 'wait', kind: 'wait', label: 'Wait for the page to update' },
+        ],
+      });
+      return { ok: true, via: 'synthetic' };
+    };
+
+    const r = runner();
+    await r.start('test api lấy danh sách voice', 7);
+    expect(r.getProgress().status, r.getProgress().lastError).toBe('done');
+    expect(r.getProgress().currentStep).toBe(1);
+    expect(jev).toHaveBeenCalledTimes(3);
+    expect(jev.mock.calls[1][1].questions.operation.instructions).toMatchObject({
+      ineffective_action_alert: expect.stringContaining('GET /v1 /voices'),
+    });
+    expect(page.sent.filter(message => message.type === 'CONTENT_ACT')).toHaveLength(1);
+    expect(r.getProgress().logs.some(log => log.operation === 'CLICK (safe Swagger fallback)')).toBe(true);
+  });
+
   it('executes the chosen target, records it, and reports page_changed on the next decision', async () => {
     jev.mockResolvedValueOnce(answer('CLICK', clickTarget('1'))).mockResolvedValueOnce(answer('DONE'));
     page.act = () => {

@@ -82,6 +82,12 @@ Trong Lumi: provider `Ollama`, base URL `http://127.0.0.1:11434/v1`, model `qwen
 
 Bật quyền Chrome Debugger cho input được tin cậy nếu bạn đồng ý với quyền này. Repo Jev gốc hỗ trợ các thao tác DOM như click, điền, select, scroll; chưa hỗ trợ mọi iframe, shadow DOM hoặc canvas. Người dùng phải xác nhận những thao tác nhạy cảm trước khi chạy và luôn kiểm tra kết quả.
 
+### Swagger UI và BLOCKED 0/30
+
+Nếu Jev trả `BLOCKED` trước khi thao tác dù còn nút tương tác, Lumi sẽ yêu cầu đánh giá lại ít nhất một lần. Với **mục tiêu khớp rõ một endpoint GET** trên Swagger UI, nếu Jev tiếp tục BLOCKED ở bước đầu, Lumi chỉ được phép **mở nhóm endpoint GET trong giao diện**, không tự ý bấm `Try it out`, `Execute`, không thực hiện HTTP request hoặc thao tác endpoint POST/PUT/DELETE. Agent có thể tiếp tục xử lý các bước sau theo yêu cầu của người dùng. Chức năng này là fallback bảo thủ, không bảo đảm hoàn thành mọi tác vụ Swagger.
+
+Khi xảy ra lỗi, ở Agent Jev hãy mở **Chẩn đoán DOM: Jev đang nhìn thấy gì?** → **Sao chép chẩn đoán**, sau đó kiểm tra provider, model và các nhãn phần tử mà extension đọc được.
+
 ## Commands
 
 | Command | Công dụng |
