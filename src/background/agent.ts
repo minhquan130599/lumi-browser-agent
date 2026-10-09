@@ -678,15 +678,23 @@ export class AgentRunner {
     let targetAction: PageAction | undefined;
     let targetConfidence = operationAnswer.confidence;
     if (operation in actionSpace.targets) {
-      try {
-        const targetAnswer = validateChoiceAnswer(
-          jevResponse.answers?.[`${operation.toLowerCase()}_target`],
-          actionSpace.targets[operation]
-        );
-        targetAction = actionSpace.targets[operation][targetAnswer.choice];
-        targetConfidence = targetAnswer.confidence;
-      } catch (err: any) {
-        return this.rejectAnswer(`Invalid target choice: ${err?.message || String(err)}`);
+      const candidates = actionSpace.targets[operation];
+      const available = Object.values(candidates);
+      if (available.length === 1) {
+        // Local SystemOne omits one-candidate questions (it requires >=2
+        // options). The unique observed target is unambiguous.
+        targetAction = available[0];
+      } else {
+        try {
+          const targetAnswer = validateChoiceAnswer(
+            jevResponse.answers?.[`${operation.toLowerCase()}_target`],
+            candidates
+          );
+          targetAction = candidates[targetAnswer.choice];
+          targetConfidence = targetAnswer.confidence;
+        } catch (err: any) {
+          return this.rejectAnswer(`Invalid target choice: ${err?.message || String(err)}`);
+        }
       }
     } else if (operation in actionSpace.controls) {
       targetAction = actionSpace.controls[operation];

@@ -112,6 +112,27 @@ describe('AgentRunner', () => {
     vi.unstubAllGlobals();
   });
 
+  it('executes a unique observed target even without a target-choice answer', async () => {
+    page.snapshot = snapshot({
+      text: 'Run test',
+      actions: [
+        { id: 'go', node: 1, kind: 'click', role: 'button', label: 'Run test' },
+        { id: 'wait', kind: 'wait', label: 'Wait for the page' },
+      ],
+    });
+    page.act = (action) => {
+      expect(action.label).toBe('Run test');
+      page.snapshot = snapshot({ text: 'Test finished' });
+      return { ok: true, via: 'synthetic' };
+    };
+    jev.mockResolvedValueOnce(answer('CLICK')).mockResolvedValueOnce(answer('DONE'));
+    const r = runner();
+    await r.start('Run test', 7);
+    expect(r.getProgress().status).toBe('done');
+    expect(r.getProgress().currentStep).toBe(1);
+    expect(page.sent.filter(m => m.type === 'CONTENT_ACT')).toHaveLength(1);
+  });
+
   it('finishes with DONE without executing anything', async () => {
     jev.mockResolvedValueOnce(answer('DONE'));
     const r = runner();

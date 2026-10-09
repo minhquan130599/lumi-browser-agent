@@ -88,6 +88,25 @@ Nếu Jev trả `BLOCKED` trước khi thao tác dù còn nút tương tác, Lum
 
 Khi xảy ra lỗi, ở Agent Jev hãy mở **Chẩn đoán DOM: Jev đang nhìn thấy gì?** → **Sao chép chẩn đoán**, sau đó kiểm tra provider, model và các nhãn phần tử mà extension đọc được.
 
+## Local Jev (tev1 / SystemOne on Ollama): fixing HTTP 403
+
+If Lumi calls `http://<LAN-IP>:11434/v1/systemone` and shows **HTTP 403** while a command-line `curl` without `Origin` works, the Ollama server is probably rejecting Chrome's `Origin: chrome-extension://<extension-id>` header. Confirm it with `curl -i -H 'Origin: chrome-extension://<extension-id>' ...` and compare without the header.
+
+**Fix this on the computer running Ollama**, not the computer merely displaying Lumi:
+
+1. Go to `chrome://extensions`, enable Developer mode, copy Lumi's exact ID.
+2. On the Ollama host, configure `OLLAMA_ORIGINS` to `chrome-extension://<extension-id>`. On Windows, use Environment Variables or PowerShell: `[Environment]::SetEnvironmentVariable("OLLAMA_ORIGINS","chrome-extension://<extension-id>","User")`.
+3. Quit the current Ollama process completely and start it again (existing processes don't inherit new environment variables).
+4. Reload Lumi and click **Test TypeSafe API** again. The local SystemOne endpoint does not need a placeholder API key when it accepts anonymous local requests.
+
+If Ollama runs as a Linux systemd service, use `sudo systemctl edit ollama`, add `[Service]` and `Environment="OLLAMA_ORIGINS=chrome-extension://<extension-id>"`, then `sudo systemctl daemon-reload && sudo systemctl restart ollama`.
+
+Avoid `OLLAMA_ORIGINS=*`: that would enable requests from arbitrary web origins. Allowing the precise extension origin is safer. Keep Ollama on a trusted LAN/firewall, especially if it does not require authentication.
+
+**Protocol compatibility:** this project also converts local SystemOne decision requests to flat string descriptions; the Ollama `tev1` endpoint rejects object-valued `choice.criteria` and requires 2–26 candidates per choice. One-option target questions are omitted, and the runtime selects the sole target itself. If more than 26 are visible, the request prioritizes candidates whose descriptions match the task. Official TypeSafe and OpenRouter requests are unchanged.
+
+See [Ollama FAQ — allowing additional web origins](https://github.com/ollama/ollama/blob/main/docs/faq.mdx#how-can-i-allow-additional-web-origins-to-access-ollama).
+
 ## Jev speed diagnostics
 
 The Jev agent now reports a timing breakdown in **Agent Jev → Hiệu năng**: total elapsed time, decision API time, DOM observation, text-helper time, browser-action time, wait time, request payload size, and number of decision calls. Use **Sao chép chẩn đoán** to share those counters without sharing provider credentials. The displayed values are measured on your own Chrome installation.
