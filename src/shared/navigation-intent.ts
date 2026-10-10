@@ -6,6 +6,8 @@ export interface NavigationIntent {
   url: string;
   hostname: string;
   searchQuery?: string;
+  /** Specific track named by the user, not a broad artist/genre search. */
+  requestedTitle?: string;
   playVideo: boolean;
   navigationOnly: boolean;
   modelGoal: string;
@@ -47,7 +49,12 @@ function isNavigationOnly(suffix: string): boolean {
   return !remainder || /^(?:nhé|đi|giúp tôi|giúp mình|cho tôi|cho mình|please|thôi)$/iu.test(remainder);
 }
 
-function youtubeSearchTerms(suffix: string): string | undefined {
+interface YoutubeSearch {
+  query: string;
+  requestedTitle?: string;
+}
+
+function youtubeSearchTerms(suffix: string): YoutubeSearch | undefined {
   const command = trimCommandSuffix(suffix);
   // If the user explicitly says to search, take those words, not the
   // later instruction to play/open the selected result.
@@ -56,6 +63,17 @@ function youtubeSearchTerms(suffix: string): string | undefined {
 
   const target = search?.[1] || play?.[1];
   if (!target) return undefined;
+
+  // Preserve explicitly named songs before removing natural-language fillers.
+  // "bật bài\nNgày Còn Đôi Mươi" is a title request, but
+  // "bật 1 bài rap của Đen Vâu" is an artist/genre request.
+  const namedSong = /^(?:(?:một|1|one|an?)\s+)?(?:bài(?:\s+hát)?|ca\s+khúc|bản\s+nhạc|song|track)\s+(.+)/iu.exec(target.trim());
+  const titleCandidate = namedSong?.[1]?.trim().replace(/^["'“”‘’]+|["'“”‘’]+$/gu, '') || '';
+  const titleWords = titleCandidate.split(/\s+/u).filter(Boolean);
+  const isGenre = /^(?:nhạc|rap|hát|thiếu\s+nhi|music)(?:\s|$)/iu.test(titleCandidate);
+  const requestedTitle = titleWords.length >= 3 && !isGenre && !/^(?:của|do|by)\s+/iu.test(titleCandidate)
+    ? titleCandidate : undefined;
+
   let query = target
     .split(/\s+(?:(?:và|rồi|sau\s+đó|then|and)\s+)?(?:bật|phát|play|mở|xem|nghe)\s+(?:cho|để|video|it|tôi|mình|me)\b/iu)[0]
     .replace(/\s+(?:cho\s+(?:tôi|mình)(?:\s+nghe)?|giúp\s+(?:tôi|mình)|please|nhé|đi)\s*$/iu, '')
@@ -69,12 +87,16 @@ function youtubeSearchTerms(suffix: string): string | undefined {
   query = query.replace(/^(?:bài|bản|video|track)\s+/iu, '');
   query = query.replace(/\s+(?:của|do|by)\s+/giu, ' ');
   query = compact(query.replace(/\s+/gu, ' '));
-  return query.length >= 2 && query.length <= 160 ? query : undefined;
+  // Never autoplay from a search consisting solely of an ambiguous filler.
+  if (!query || /^(?:bài|bản|hát|song|track|video)$/iu.test(query)) return undefined;
+  return query.length >= 2 && query.length <= 160 ? { query, requestedTitle } : undefined;
 }
 
 /** Returns null when the user does not explicitly command navigation. */
 export function parseNavigationIntent(userGoal: string): NavigationIntent | null {
-  const goal = userGoal.slice(0, 500);
+  // Textarea prompts routinely contain line breaks. Normalizing whitespace
+  // BEFORE matching prevents RegExp '.' from silently dropping the song title.
+  const goal = userGoal.slice(0, 500).replace(/\s+/gu, ' ').trim();
   const prefix = navigationPrefix.exec(goal);
   if (!prefix) return null;
 
@@ -105,7 +127,9 @@ export function parseNavigationIntent(userGoal: string): NavigationIntent | null
 
   const isYoutube = youtubeHost(url.hostname.toLowerCase());
   const cleanedSuffix = trimCommandSuffix(suffix);
-  const searchQuery = isYoutube ? youtubeSearchTerms(cleanedSuffix) : undefined;
+  const youtubeSearch = isYoutube ? youtubeSearchTerms(cleanedSuffix) : undefined;
+  const searchQuery = youtubeSearch?.query;
+  const requestedTitle = youtubeSearch?.requestedTitle;
   const playVideo = isYoutube && (
     /(?:^|[\s,;])(?:bật|phát|nghe|play|xem)(?=$|[\s,;.!?])/iu.test(cleanedSuffix) &&
     !/(?:không|đừng|do\s+not|don't)\s+(?:bật|phát|play)/iu.test(cleanedSuffix)
@@ -118,8 +142,11 @@ export function parseNavigationIntent(userGoal: string): NavigationIntent | null
   }
 
   const modelGoal = searchQuery
-    ? 'On YouTube search results for "' + searchQuery + '", open a relevant video and ' +
-      (playVideo ? 'start playback. Do not mark DONE until the video is actually playing.' : 'show the video page.')
+    ? 'On YouTube search results for "' + searchQuery + '", ' +
+      (requestedTitle
+        ? 'ONLY choose a result with the full matching song title "' + requestedTitle + '". Never play a generic result. '
+        : 'choose a relevant matching video. ') +
+      (playVideo ? 'Verify the requested video title and start playback. Do not mark DONE until the correct video is playing.' : 'Show the matching video page.')
     : navigationOnly
       ? 'Navigate to ' + url.origin + '.'
       : 'You are already at ' + url.hostname + '. Complete the remaining task: ' + (cleanedSuffix || userGoal);
@@ -128,6 +155,7 @@ export function parseNavigationIntent(userGoal: string): NavigationIntent | null
     url: url.toString(),
     hostname: url.hostname,
     searchQuery,
+    requestedTitle,
     playVideo,
     navigationOnly,
     modelGoal,

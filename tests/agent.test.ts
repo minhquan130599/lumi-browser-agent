@@ -215,6 +215,38 @@ describe('AgentRunner', () => {
     expect(textHelper).not.toHaveBeenCalled();
   });
 
+  it('never reports DONE for a different song even if the YouTube player is already playing', async () => {
+    const chromeMock = installChrome(page);
+    let currentUrl = 'https://www.google.com/search?q=music';
+    chromeMock.tabs.get.mockImplementation(async () =>
+      ({ id: 7, url: currentUrl, status: 'complete' } as any));
+    chromeMock.tabs.update.mockImplementation(async () => {
+      currentUrl = 'https://www.youtube.com/watch?v=wrong123';
+      page.snapshot = snapshot({
+        url: currentUrl,
+        title: 'BÀI CA MÙA HẠ Remix - YouTube',
+        text: 'BÀI CA MÙA HẠ Remix',
+        actions: [{ id: 'wait', kind: 'wait', label: 'Wait' }],
+      });
+      return { id: 7, url: currentUrl, status: 'complete' };
+    });
+    const original = chromeMock.tabs.sendMessage.getMockImplementation()!;
+    chromeMock.tabs.sendMessage.mockImplementation(async (tabId: number, message: any) => {
+      if (message.type === 'CONTENT_MEDIA_STATUS') {
+        return { found: true, playing: true, paused: false, videoTitle: 'BÀI CA MÙA HẠ Remix' };
+      }
+      return original(tabId, message);
+    });
+
+    const r = runner();
+    await r.start('mở youtube bật cho tôi bài \nNgày Còn Đôi Mươi', 7);
+    expect(r.getProgress().status).toBe('blocked');
+    expect(r.getProgress().lastError).toContain('Ngày Còn Đôi Mươi');
+    expect(r.getProgress().lastError).toContain('BÀI CA MÙA HẠ');
+    expect(r.getProgress().logs.some(log => log.operation === 'VERIFY_PLAYING')).toBe(false);
+    expect(r.getProgress().timing?.decisionCalls).toBe(0);
+  });
+
   it('does not claim completion when the YouTube player refuses playback', async () => {
     const chromeMock = installChrome(page);
     let currentUrl = 'https://www.google.com/';

@@ -77,6 +77,28 @@ describe('explicit user navigation intent', () => {
     expect(parseNavigationIntent('open youtube play a song by Adele')?.searchQuery).toBe('song Adele');
   });
 
+  it('preserves the full song name even when the user types a newline after "bài"', () => {
+    const goal = 'mở youtube bật cho tôi bài \nNgày Còn Đôi Mươi';
+    const plan = parseNavigationIntent(goal);
+    expect(plan).toMatchObject({
+      hostname: 'www.youtube.com',
+      searchQuery: 'Ngày Còn Đôi Mươi',
+      requestedTitle: 'Ngày Còn Đôi Mươi',
+      playVideo: true,
+    });
+    expect(plan?.url).toBe('https://www.youtube.com/results?search_query=Ng%C3%A0y+C%C3%B2n+%C4%90%C3%B4i+M%C6%B0%C6%A1i');
+    expect(plan?.modelGoal).toContain('ONLY choose a result with the full matching song title');
+  });
+
+  it('keeps broad genre and artist requests distinct from exact song titles', () => {
+    expect(parseNavigationIntent('mở youtube, bật cho tôi 1 bài rap của đen vâu')).toMatchObject({
+      searchQuery: 'rap đen vâu', requestedTitle: undefined,
+    });
+    expect(parseNavigationIntent('mở youtube.com tìm 1 bản nhạc thiếu nhi và bật cho tôi')).toMatchObject({
+      searchQuery: 'nhạc thiếu nhi', requestedTitle: undefined,
+    });
+  });
+
   it('navigates to a named website without requiring a Jev decision', () => {
     expect(parseNavigationIntent('hãy mở github.com')?.url).toBe('https://github.com/');
     expect(parseNavigationIntent('hãy mở github.com')?.navigationOnly).toBe(true);

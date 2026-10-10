@@ -63,23 +63,35 @@ try {
     await context.route('https://www.youtube.com/**', async route => {
       const url = route.request().url();
       if (new URL(url).pathname === '/results') {
-        const rap = (new URL(url).searchParams.get('search_query') || '').toLowerCase().includes('rap');
+        const search = (new URL(url).searchParams.get('search_query') || '').toLowerCase();
+        const rap = search.includes('rap');
+        const exactSong = search.normalize('NFKD').replace(/[\u0300-\u036f]/g, '')
+          .replace(/đ/g, 'd').includes('ngay con doi muoi');
         await route.fulfill({
           status: 200, contentType: 'text/html; charset=utf-8',
           body: '<!doctype html><html><head><title>YouTube search results</title></head><body>' +
-            (rap
-              ? '<main><h1>Search results for rap Đen Vâu</h1>' +
-                '<a href="/watch?v=other123">Nhạc Thiếu Nhi Vui Nhộn</a>' +
-                '<a href="/watch?v=denvau123">Đen Vâu Rap Việt Nam - Official Music Video</a></main>'
-              : '<main><h1>Search results for nhạc thiếu nhi</h1>' +
-                '<a href="/watch?v=kids123">Nhạc Thiếu Nhi Vui Nhộn Cho Bé - music</a></main>') +
+            (exactSong
+              ? '<main><h1>Results for Ngày Còn Đôi Mươi</h1>' +
+                '<a href="/watch?v=wrong123">BÀI CA MÙA HẠ Remix - Xanh</a>' +
+                '<a href="/watch?v=correct123">NGÀY CÒN ĐÔI MƯƠI - Official Music Video</a></main>'
+              : rap
+                ? '<main><h1>Search results for rap Đen Vâu</h1>' +
+                  '<a href="/watch?v=other123">Nhạc Thiếu Nhi Vui Nhộn</a>' +
+                  '<a href="/watch?v=denvau123">Đen Vâu Rap Việt Nam - Official Music Video</a></main>'
+                : '<main><h1>Search results for nhạc thiếu nhi</h1>' +
+                  '<a href="/watch?v=kids123">Nhạc Thiếu Nhi Vui Nhộn Cho Bé - music</a></main>') +
             '</body></html>',
         });
       } else if (new URL(url).pathname === '/watch') {
+        const videoId = new URL(url).searchParams.get('v');
+        const songName = videoId === 'correct123' ? 'NGÀY CÒN ĐÔI MƯƠI - Official Audio'
+          : videoId === 'wrong123' ? 'BÀI CA MÙA HẠ Remix'
+          : videoId === 'denvau123' ? 'Đen Vâu Rap Việt Nam - Official Music Video'
+          : 'Nhạc Thiếu Nhi Vui Nhộn Cho Bé';
         await route.fulfill({
           status: 200, contentType: 'text/html; charset=utf-8',
-          body: '<!doctype html><html><head><title>Nhạc thiếu nhi - YouTube</title></head><body>' +
-            '<main><h1>Nhạc Thiếu Nhi Vui Nhộn Cho Bé</h1>' +
+          body: '<!doctype html><html><head><title>' + songName + ' - YouTube</title></head><body>' +
+            '<main><h1>' + songName + '</h1>' +
             '<button id="subscribe">Subscribe</button><button id="share">Share</button>' +
             '<video id="player" style="width:400px;height:220px" onclick="this.play()"></video>' +
             '<script>const c=document.createElement("canvas");c.width=160;c.height=90;' +
@@ -179,6 +191,37 @@ try {
         !rapResult.operations.includes('SEARCH (navigate)') ||
         !rapResult.operations.includes('CLICK (YouTube recovery)')) {
       throw new Error('Natural-language YouTube rap music workflow failed');
+    }
+
+    // Regression for multiline song names: the first search result is the
+    // WRONG song. Only the second result contains the user's full track name.
+    await page.goto('http://127.0.0.1:' + port + '/initial');
+    const exactGoal = 'mở youtube bật cho tôi bài \nNgày Còn Đôi Mươi';
+    const exactStart = await extension.evaluate(async ({ tabId, goal }) =>
+      chrome.runtime.sendMessage({ type: 'START_AGENT', tabId, goal }), { tabId, goal: exactGoal });
+    if (!exactStart?.success) throw new Error('Exact-title task did not start.');
+    let exactProgress: any;
+    for (let i = 0; i < 120; i++) {
+      await new Promise(resolve => setTimeout(resolve, 100));
+      exactProgress = await extension.evaluate(async () =>
+        (await chrome.runtime.sendMessage({ type: 'GET_PROGRESS' }))?.progress);
+      if (exactProgress && !['running', 'paused'].includes(exactProgress.status)) break;
+    }
+    const exactResult = {
+      status: exactProgress?.status,
+      steps: exactProgress?.currentStep,
+      url: page.url(),
+      playing: await page.evaluate(() => !document.querySelector('video')?.paused),
+      selected: (exactProgress?.logs || []).find((l: any) => l.operation === 'CLICK (YouTube recovery)')?.targetLabel,
+      verified: (exactProgress?.logs || []).find((l: any) => l.operation === 'VERIFY_PLAYING')?.targetLabel,
+    };
+    console.log(JSON.stringify({ multilineExactSongTest: exactResult }));
+    if (exactResult.status !== 'done' ||
+        !exactResult.url.startsWith('https://www.youtube.com/watch?v=correct123') ||
+        !exactResult.playing ||
+        !exactResult.selected?.includes('NGÀY CÒN ĐÔI MƯƠI') ||
+        !exactResult.verified?.includes('NGÀY CÒN ĐÔI MƯƠI')) {
+      throw new Error('Multiline song task opened or verified the wrong track.');
     }
 
     // Badge overlay regression: render numbered controls, disable overlay via

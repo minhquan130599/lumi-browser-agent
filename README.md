@@ -101,6 +101,8 @@ Bật **Trusted Input** trong Jev Settings nếu bạn đồng ý cho Lumi dùng
 
 ### Mở website và phát nhạc YouTube
 
+**Tìm chính xác tên bài hát (v0.1.2):** Với lệnh nhiều dòng như `mở youtube bật cho tôi bài\nNgày Còn Đôi Mươi`, Lumi chuẩn hóa xuống dòng, trích xuất đầy đủ `Ngày Còn Đôi Mươi` thay vì `bài`, và chọn kết quả có **cả cụm tiêu đề** (so khớp không phân biệt dấu/chữ hoa). Các video như `BÀI CA MÙA HẠ Remix` bị loại bỏ. Ở trang xem, Lumi lấy tiêu đề video thực từ vùng metadata, kiểm tra đúng tên bài và ID video đã chọn; chỉ kết thúc `DONE` khi đúng bài đang phát. Nếu không xác nhận được tên bài, nó báo `BLOCKED` thay vì phát một video ngẫu nhiên. Đây là cơ chế kiểm tra tiêu đề chặt chẽ cho yêu cầu rõ ràng, không phải hiểu ý tổng quát qua LLM.
+
 Lumi nhận diện địa chỉ web **hoặc tên một số website thông dụng được nói rõ** trong câu lệnh `mở ...`, `vào ...`, `open ...` hoặc `go to ...`. Ví dụ `mở youtube` (không cần `.com`), `vào github`, `mở youtube.com`. Nó điều hướng tab hiện tại bằng Chrome API **trước khi hỏi Jev**, thay vì đòi Jev click một nút không tồn tại trên trang cũ. Hai câu ví dụ:
 
 `mở youtube.com tìm 1 bản nhạc thiếu nhi và bật cho tôi`

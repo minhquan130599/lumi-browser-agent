@@ -4,7 +4,7 @@ import { createFieldContext, generateFieldText } from '../shared/text-helper';
 import { suggestSwaggerGetOperation } from '../shared/swagger-support';
 import { isLocalSystemOneEndpoint, toLocalSystemOneRequest } from '../shared/providers/local-systemone';
 import { isYoutubeResultPage, isYoutubeWatchPage, parseNavigationIntent, type NavigationIntent } from '../shared/navigation-intent';
-import { suggestYoutubeVideo } from '../shared/youtube-support';
+import { suggestYoutubeVideo, titleMatchesRequestedSong, watchVideoId } from '../shared/youtube-support';
 import {
   ActResult,
   AgentProgress,
@@ -106,6 +106,9 @@ export class AgentRunner {
   private youtubeVideoFallbackUsed = false;
   private youtubePlayAttempted = false;
   private youtubeWaits = 0;
+  private youtubeTitleWaits = 0;
+  /** Video ID chosen from a matching search result, used to detect redirects/autoplay changes. */
+  private expectedYoutubeVideoId: string | null = null;
 
   private lastFingerprint: string | null = null;
   private lastSummary: PageSummary | null = null;
@@ -197,6 +200,8 @@ export class AgentRunner {
     this.youtubeVideoFallbackUsed = false;
     this.youtubePlayAttempted = false;
     this.youtubeWaits = 0;
+    this.youtubeTitleWaits = 0;
+    this.expectedYoutubeVideoId = null;
     this.history = [];
     this.lastFingerprint = null;
     this.lastSummary = null;
@@ -461,15 +466,11 @@ export class AgentRunner {
     }
 
     const media = await chrome.tabs.sendMessage(tabId, { type: 'CONTENT_MEDIA_STATUS' })
-      .catch(() => null) as { found?: boolean; playing?: boolean; paused?: boolean } | null;
+      .catch(() => null) as { found?: boolean; playing?: boolean; paused?: boolean; videoTitle?: string } | null;
     if (token !== this.runToken) return false;
-    if (media?.playing) {
-      this.addLog({
-        step: this.progress.currentStep, timestamp: Date.now(),
-        operation: 'VERIFY_PLAYING', targetLabel: 'YouTube video is playing',
-        provider: 'browser', latencyMs: 0,
-      });
-      this.finish('done');
+
+    if (this.expectedYoutubeVideoId && watchVideoId(snapshot.url) !== this.expectedYoutubeVideoId) {
+      this.finish('blocked', 'YouTube changed to a different video after the selected result. The requested song was not verified.');
       return false;
     }
 
@@ -482,6 +483,40 @@ export class AgentRunner {
       this.finish('blocked', 'YouTube watch page loaded, but no HTML video element appeared. Check sign-in, consent or page loading.');
       return false;
     }
+
+    // A video playing is NOT proof that it is the requested track. Wait for
+    // YouTube's watch-title metadata and compare the full, accent-insensitive
+    // title before playing or marking the goal DONE.
+    if (intent.requestedTitle) {
+      const actualTitle = media.videoTitle?.trim() || '';
+      if (!actualTitle) {
+        if (++this.youtubeTitleWaits <= 8) {
+          this.setPhase('waiting');
+          await new Promise(resolve => setTimeout(resolve, 350));
+          return token === this.runToken;
+        }
+        this.finish('blocked', `Cannot verify the requested song "${intent.requestedTitle}": YouTube did not expose the playing video title. Not marking DONE.`);
+        return false;
+      }
+      if (!titleMatchesRequestedSong(actualTitle, intent.requestedTitle)) {
+        this.finish('blocked', `The opened video is "${actualTitle}", but you requested "${intent.requestedTitle}". Refusing to report success or play the wrong song.`);
+        return false;
+      }
+    }
+
+    if (media.playing) {
+      this.addLog({
+        step: this.progress.currentStep, timestamp: Date.now(),
+        operation: 'VERIFY_PLAYING',
+        targetLabel: intent.requestedTitle
+          ? `Verified "${media.videoTitle}" is playing`
+          : 'YouTube video is playing',
+        provider: 'browser', latencyMs: 0,
+      });
+      this.finish('done');
+      return false;
+    }
+
     if (!this.youtubePlayAttempted) {
       this.youtubePlayAttempted = true;
       this.setPhase('acting');
@@ -548,7 +583,7 @@ export class AgentRunner {
   private async openYoutubeResult(tabId: number, snapshot: PageSnapshot, token: number): Promise<boolean | null> {
     const intent = this.navigationIntent;
     if (!intent?.searchQuery || !isYoutubeResultPage(snapshot.url) || this.youtubeVideoFallbackUsed) return null;
-    const action = suggestYoutubeVideo(snapshot, intent.searchQuery);
+    const action = suggestYoutubeVideo(snapshot, intent.searchQuery, intent.requestedTitle);
     if (!action) return null;
 
     this.youtubeVideoFallbackUsed = true;
@@ -571,6 +606,7 @@ export class AgentRunner {
     }
     this.recordTime('actionMs', Date.now() - start);
     if (token !== this.runToken) return false;
+    this.expectedYoutubeVideoId = watchVideoId(action.href || '', snapshot.url);
     this.history.push({
       step: this.progress.currentStep + 1,
       action: 'CLICK ' + action.label,
@@ -640,7 +676,7 @@ export class AgentRunner {
     // YouTube loads results asynchronously. Avoid giving an empty page to the
     // small Jev model and immediately receiving a false BLOCKED decision.
     if (this.navigationIntent?.searchQuery && isYoutubeResultPage(snapshot.url)) {
-      if (!suggestYoutubeVideo(snapshot, this.navigationIntent.searchQuery) && this.youtubeWaits++ < 5) {
+      if (!suggestYoutubeVideo(snapshot, this.navigationIntent.searchQuery, this.navigationIntent.requestedTitle) && this.youtubeWaits++ < 5) {
         this.setPhase('waiting');
         await new Promise(resolve => setTimeout(resolve, 400));
         return token === this.runToken;
@@ -853,7 +889,9 @@ export class AgentRunner {
     ) {
       const recovery = await this.openYoutubeResult(tabId, snapshot, token);
       if (recovery !== null) return recovery;
-      this.finish('blocked', 'YouTube search completed, but no playable video result link is currently visible. Try reloading the results or refining the search.');
+      this.finish('blocked', this.navigationIntent.requestedTitle
+        ? `Không tìm thấy video có tên đầy đủ "${this.navigationIntent.requestedTitle}" trong các kết quả đang hiển thị. Lumi không mở bài không liên quan; hãy thử cuộn thêm hoặc tìm theo tên nghệ sĩ.`
+        : 'YouTube search completed, but no matching playable video is currently visible. Try scrolling or refining the search.');
       return false;
     }
 
@@ -985,6 +1023,25 @@ export class AgentRunner {
     if (!targetAction) {
       this.finish('error', `Could not find target action for operation: ${operation}`);
       return false;
+    }
+
+    // Reject model-selected links that fail the user's requested song match.
+    // The deterministic fallback and the LLM must obey the same constraint.
+    if (operation === 'CLICK' && this.navigationIntent?.searchQuery &&
+        isYoutubeResultPage(snapshot.url) && watchVideoId(targetAction.href || '', snapshot.url) &&
+        !suggestYoutubeVideo({ url: snapshot.url, actions: [targetAction] },
+          this.navigationIntent.searchQuery, this.navigationIntent.requestedTitle)) {
+      this.targetFailureCount.set(targetAction.id, 2);
+      this.lastStaleNotice = this.navigationIntent.requestedTitle
+        ? `Refused "${targetAction.label}": the full requested title "${this.navigationIntent.requestedTitle}" does not match. Find an exact title or scroll.`
+        : `Refused unrelated YouTube result "${targetAction.label}". Find a video that matches the search.`;
+      this.addLog({
+        step: this.progress.currentStep, timestamp: Date.now(),
+        operation: 'CLICK (rejected wrong song)', targetLabel: targetAction.label,
+        provider, latencyMs: 0,
+      });
+      this.broadcastUpdate();
+      return true;
     }
 
     // A search command was already applied through YouTube's results URL.

@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { suggestYoutubeVideo } from '../src/shared/youtube-support';
+import { suggestYoutubeVideo, titleMatchesRequestedSong, topicMatchesVideo, watchVideoId } from '../src/shared/youtube-support';
 import type { PageAction } from '../src/shared/types';
 
 const actions: PageAction[] = [
@@ -38,6 +38,33 @@ describe('YouTube result recovery', () => {
       actions: [{ id: 'wrong', node: 1, kind: 'click', role: 'link',
         label: 'Classical music for studying', href: '/watch?v=other123' }],
     }, 'rap đen vâu')).toBeNull();
+  });
+
+  it('matches the entire named track rather than any generic music keyword', () => {
+    const found = suggestYoutubeVideo({
+      url: 'https://www.youtube.com/results?search_query=Ng%C3%A0y+C%C3%B2n+%C4%90%C3%B4i+M%C6%B0%C6%A1i',
+      actions: [
+        { id: 'wrong', node: 1, kind: 'click', role: 'link',
+          label: 'BÀI CA MÙA HẠ Remix - Xanh', href: '/watch?v=wrong123' },
+        { id: 'generic', node: 2, kind: 'click', role: 'link',
+          label: 'Bài hát hay nhất ngày hôm nay', href: '/watch?v=generic' },
+        { id: 'requested', node: 3, kind: 'click', role: 'link',
+          label: 'NGÀY CÒN ĐÔI MƯƠI - Official Music Video', href: '/watch?v=correct123' },
+      ],
+    }, 'Ngày Còn Đôi Mươi', 'Ngày Còn Đôi Mươi');
+    expect(found?.id).toBe('requested');
+    expect(titleMatchesRequestedSong('NGAY CON DOI MUOI | Official MV', 'Ngày Còn Đôi Mươi')).toBe(true);
+    expect(titleMatchesRequestedSong('BÀI CA MÙA HẠ Remix', 'Ngày Còn Đôi Mươi')).toBe(false);
+    expect(topicMatchesVideo('Một ngày thật đẹp', 'Ngày Còn Đôi Mươi')).toBe(false);
+  });
+
+  it('refuses an unrelated result even if it is the only visible video', () => {
+    expect(suggestYoutubeVideo({
+      url: 'https://www.youtube.com/results?search_query=Ngay+Con+Doi+Muoi',
+      actions: [{ id: 'wrong', node: 1, kind: 'click', role: 'link',
+        label: 'BÀI CA MÙA HẠ Remix', href: '/watch?v=wrong123' }],
+    }, 'Ngày Còn Đôi Mươi', 'Ngày Còn Đôi Mươi')).toBeNull();
+    expect(watchVideoId('https://www.youtube.com/watch?v=abc123&list=RDabc123')).toBe('abc123');
   });
 
   it('does not trigger outside YouTube search results', () => {

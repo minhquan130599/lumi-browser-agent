@@ -62,11 +62,21 @@ function boot(): void {
 
         case 'CONTENT_MEDIA_STATUS': {
           const video = document.querySelector('video');
+          // Read the actual title displayed ABOVE the recommendations on a
+          // YouTube watch page. Document.title can be just "YouTube" during
+          // SPA navigation; the search textbox/playlist is not title evidence.
+          const heading = document.querySelector(
+            'ytd-watch-metadata h1, ytd-watch-flexy h1, #above-the-fold #title h1, main h1, #title h1'
+          );
+          const headingText = heading?.textContent?.replace(/\s+/g, ' ').trim() || '';
+          const pageTitle = document.title.replace(/\s+-\s+YouTube(?:\s+.*)?$/iu, '').trim();
+          const videoTitle = headingText || (/^YouTube$/iu.test(pageTitle) ? '' : pageTitle);
           sendResponse({
             found: Boolean(video),
             playing: Boolean(video && !video.paused && !video.ended),
             paused: Boolean(video?.paused),
             readyState: video?.readyState ?? 0,
+            videoTitle,
           });
           return false;
         }
