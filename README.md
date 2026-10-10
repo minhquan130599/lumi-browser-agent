@@ -101,11 +101,15 @@ Bật **Trusted Input** trong Jev Settings nếu bạn đồng ý cho Lumi dùng
 
 ### Mở website và phát nhạc YouTube
 
-Lumi hiện nhận diện URL/hostname **được người dùng nói rõ** trong câu lệnh `mở ...`, `vào ...`, `open ...` hoặc `go to ...`. Nó điều hướng tab hiện tại bằng Chrome API **trước khi hỏi Jev**, thay vì đòi Jev click một nút không tồn tại trên trang cũ. Lệnh ví dụ:
+Lumi nhận diện địa chỉ web **hoặc tên một số website thông dụng được nói rõ** trong câu lệnh `mở ...`, `vào ...`, `open ...` hoặc `go to ...`. Ví dụ `mở youtube` (không cần `.com`), `vào github`, `mở youtube.com`. Nó điều hướng tab hiện tại bằng Chrome API **trước khi hỏi Jev**, thay vì đòi Jev click một nút không tồn tại trên trang cũ. Hai câu ví dụ:
 
 `mở youtube.com tìm 1 bản nhạc thiếu nhi và bật cho tôi`
 
-Với mẫu lệnh này, Lumi điều hướng trực tiếp tới YouTube search results, vì vậy không cần gọi Text Helper chỉ để nhập từ khóa. Jev chọn video từ kết quả thực tế; nếu Jev báo `BLOCKED` dù vẫn có một link `/watch?v=...` phù hợp, Lumi có nhánh dự phòng chỉ click một video hợp lệ trong trang kết quả YouTube. Trên trang xem, Lumi quan sát `<video>`, thử bấm Play (ưu tiên Chrome Debugger trusted input khi cần) và **chỉ báo DONE khi trạng thái video là playing**. Nếu gặp hạn chế autoplay, lỗi tải nội dung, đăng nhập hoặc lời nhắc chấp thuận, Lumi sẽ thông báo rõ và có thể cần bạn thao tác thủ công.
+`mở youtube, bật cho tôi 1 bài rap của đen vâu`
+
+Bản sửa ngôn ngữ tự nhiên bắt đầu từ **Lumi v0.1.1**. Sau khi build, vào `chrome://extensions` → **Reload** extension được nạp từ thư mục **`dist`** và kiểm tra thẻ Lumi hiển thị phiên bản **0.1.1**. Nếu vẫn thấy **0.1.0** hoặc log cũ vẫn dừng ở URL GitHub với `step: 0`, kiểm tra đường dẫn **Extension details → Loaded from**, sau đó nạp lại đúng thư mục `dist`. Reload tab website trước khi thử lại nếu content script cũ còn hoạt động.
+
+Cả hai đều được chuyển thành URL kết quả tìm kiếm YouTube; câu thứ hai tự rút gọn thành từ khóa `rap đen vâu`. Khi có một liên kết video phù hợp, Lumi click video trực tiếp; không cần gọi Jev hoặc Text Helper để nhập lại từ khóa. Nếu chưa có liên kết phù hợp, Lumi tiếp tục quan sát trang/nhờ Jev thay vì coi việc mở website là đủ để hoàn thành. Trên trang xem, Lumi quan sát `<video>`, thử bấm Play (ưu tiên Chrome Debugger trusted input khi cần) và **chỉ báo DONE khi trạng thái video là playing**. Nếu gặp hạn chế autoplay, lỗi tải nội dung, đăng nhập hoặc lời nhắc chấp thuận, Lumi sẽ thông báo rõ và có thể cần bạn thao tác thủ công. Trên trang xem, Lumi quan sát `<video>`, thử bấm Play (ưu tiên Chrome Debugger trusted input khi cần) và **chỉ báo DONE khi trạng thái video là playing**. Nếu gặp hạn chế autoplay, lỗi tải nội dung, đăng nhập hoặc lời nhắc chấp thuận, Lumi sẽ thông báo rõ và có thể cần bạn thao tác thủ công.
 
 **Khi mục tiêu là tìm và bật nhạc YouTube:** Sau khi có kết quả phù hợp, Lumi mở một đường dẫn video `/watch?v=...` thay vì chọn `TYPE_TEXT` để nhập lại từ khóa. Tác vụ này không cần Text Helper hay API key riêng. Với những nhiệm vụ nhập liệu khác, **Jev decision provider và Text Helper là hai cấu hình độc lập**: vào **Cài đặt Jev / Text helper → Text Generation Helper**, chọn `Ollama local`, Base URL `http://<OLLAMA_LAN_IP>:11434/v1` và một model **chat/instruct** đã cài trên Ollama (ví dụ `qwen3:8b`). Model `tev1` qua `/v1/systemone` chỉ là decision API, không dùng làm Text Helper chat thông thường. Nếu Ollama từ chối origin của extension, hãy cấp `OLLAMA_ORIGINS` theo hướng dẫn phía dưới.
 

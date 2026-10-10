@@ -14,6 +14,69 @@ describe('explicit user navigation intent', () => {
     expect(plan?.modelGoal).toContain('Do not mark DONE until');
   });
 
+  it('understands natural Vietnamese YouTube play requests without .com or a search verb', () => {
+    const plan = parseNavigationIntent('mở youtube, bật cho tôi 1 bài rap của đen vâu');
+    expect(plan).toMatchObject({
+      hostname: 'www.youtube.com',
+      searchQuery: 'rap đen vâu',
+      playVideo: true,
+      navigationOnly: false,
+    });
+    expect(plan?.url).toBe('https://www.youtube.com/results?search_query=rap+%C4%91en+v%C3%A2u');
+    expect(plan?.modelGoal).toContain('start playback');
+  });
+
+  it.each([
+    ['vào YouTube tìm nhạc của Đen Vâu rồi phát cho tôi', 'nhạc Đen Vâu', true],
+    ['hãy mở trang YouTube, phát một bài rap của Đen Vâu', 'rap Đen Vâu', true],
+    ['mở yt, nghe nhạc thiếu nhi', 'nhạc thiếu nhi', true],
+    ['open youtube search for kids music and play it', 'kids music', true],
+    ['mở YouTube, tìm bài hát Sơn Tùng', 'nhạc Sơn Tùng', false],
+  ])('parses: %s', (goal, query, play) => {
+    expect(parseNavigationIntent(goal)).toMatchObject({
+      hostname: 'www.youtube.com', searchQuery: query, playVideo: play,
+    });
+  });
+
+  it('supports spoken site names for navigation-only requests', () => {
+    expect(parseNavigationIntent('mở youtube nhé')).toMatchObject({
+      url: 'https://www.youtube.com/', navigationOnly: true,
+    });
+    expect(parseNavigationIntent('mở github')?.url).toBe('https://github.com/');
+    expect(parseNavigationIntent('vào google')?.url).toBe('https://www.google.com/');
+    expect(parseNavigationIntent('mở github.com')?.url).toBe('https://github.com/');
+  });
+
+  it('ignores untrusted explanatory wording and unknown site nicknames', () => {
+    expect(parseNavigationIntent('Hướng dẫn cách mở youtube rồi tìm video')).toBeNull();
+    expect(parseNavigationIntent('mở youtube.com.evil.test')).toMatchObject({
+      url: 'https://youtube.com.evil.test/',
+    });
+    expect(parseNavigationIntent('mở youtubee, bật rap')).toBeNull();
+    expect(parseNavigationIntent('tại sao youtube.com không phát nhạc?')).toBeNull();
+  });
+
+  it('recognizes YouTube by its spoken name and searches for rap by Đen Vâu', () => {
+    const goal = 'mở youtube, bật cho tôi 1 bài rap của đen vâu';
+    const plan = parseNavigationIntent(goal);
+    expect(plan).toMatchObject({
+      hostname: 'www.youtube.com',
+      searchQuery: 'rap đen vâu',
+      playVideo: true,
+      navigationOnly: false,
+    });
+    expect(plan?.url).toBe('https://www.youtube.com/results?search_query=rap+%C4%91en+v%C3%A2u');
+    expect(plan?.modelGoal).toContain('start playback');
+  });
+
+  it('accepts a short spoken site name for navigation-only commands', () => {
+    expect(parseNavigationIntent('mở youtube')?.url).toBe('https://www.youtube.com/');
+    expect(parseNavigationIntent('vào YouTube nhé')?.navigationOnly).toBe(true);
+    expect(parseNavigationIntent('mở you tube')?.hostname).toBe('www.youtube.com');
+    expect(parseNavigationIntent('mở github')?.url).toBe('https://github.com/');
+    expect(parseNavigationIntent('open youtube play a song by Adele')?.searchQuery).toBe('song Adele');
+  });
+
   it('navigates to a named website without requiring a Jev decision', () => {
     expect(parseNavigationIntent('hãy mở github.com')?.url).toBe('https://github.com/');
     expect(parseNavigationIntent('hãy mở github.com')?.navigationOnly).toBe(true);

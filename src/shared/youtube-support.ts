@@ -34,5 +34,8 @@ export function suggestYoutubeVideo(
       return { action, index, matches };
     })
     .sort((a, b) => b.matches - a.matches || a.index - b.index);
-  return candidates[0]?.action ?? null;
+  // Do not play an unrelated first result if no visible video matches the
+  // user's requested artist/genre. Let the agent keep searching instead.
+  const best = candidates[0];
+  return best && (query.length === 0 || best.matches > 0) ? best.action : null;
 }

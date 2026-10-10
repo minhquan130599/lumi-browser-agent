@@ -17,6 +17,29 @@ describe('YouTube result recovery', () => {
     }, 'nhạc thiếu nhi')?.id).toBe('song');
   });
 
+  it('prefers a Đen Vâu rap performance over an unrelated video appearing first', () => {
+    const result = suggestYoutubeVideo({
+      url: 'https://www.youtube.com/results?search_query=rap+%C4%91en+v%C3%A2u',
+      actions: [
+        { id: 'wrong', node: 1, kind: 'click', role: 'link',
+          label: 'Top bài nhạc thiếu nhi mới nhất', href: '/watch?v=unrelated123' },
+        { id: 'denvau', node: 2, kind: 'click', role: 'link',
+          label: 'Đen Vâu - RAP Việt Nam | Official Music Video', href: '/watch?v=denvau123' },
+        { id: 'paid', node: 3, kind: 'click', role: 'link',
+          label: 'Sponsored - Đen Vâu Rap', href: '/watch?v=ad123' },
+      ],
+    }, 'rap đen vâu');
+    expect(result?.id).toBe('denvau');
+  });
+
+  it('does not play an unrelated video when no result matches the requested artist', () => {
+    expect(suggestYoutubeVideo({
+      url: 'https://www.youtube.com/results?search_query=rap+den+vau',
+      actions: [{ id: 'wrong', node: 1, kind: 'click', role: 'link',
+        label: 'Classical music for studying', href: '/watch?v=other123' }],
+    }, 'rap đen vâu')).toBeNull();
+  });
+
   it('does not trigger outside YouTube search results', () => {
     expect(suggestYoutubeVideo({ url: 'https://www.google.com/search?q=music', actions }, 'music')).toBeNull();
     expect(suggestYoutubeVideo({ url: 'https://www.youtube.com/watch?v=123', actions }, 'music')).toBeNull();

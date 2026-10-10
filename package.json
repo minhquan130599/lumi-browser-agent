@@ -1,6 +1,6 @@
 {
   "name": "lumi-browser-agent",
-  "version": "0.1.0",
+  "version": "0.1.1",
   "description": "Lumi Browser AI: multi-provider page chat and browser automation powered by Jev.",
   "scripts": {
     "build": "vite build",

@@ -63,11 +63,17 @@ try {
     await context.route('https://www.youtube.com/**', async route => {
       const url = route.request().url();
       if (new URL(url).pathname === '/results') {
+        const rap = (new URL(url).searchParams.get('search_query') || '').toLowerCase().includes('rap');
         await route.fulfill({
           status: 200, contentType: 'text/html; charset=utf-8',
           body: '<!doctype html><html><head><title>YouTube search results</title></head><body>' +
-            '<main><h1>Search results for nhạc thiếu nhi</h1>' +
-            '<a href="/watch?v=kids123">Nhạc Thiếu Nhi Vui Nhộn Cho Bé - music</a></main></body></html>',
+            (rap
+              ? '<main><h1>Search results for rap Đen Vâu</h1>' +
+                '<a href="/watch?v=other123">Nhạc Thiếu Nhi Vui Nhộn</a>' +
+                '<a href="/watch?v=denvau123">Đen Vâu Rap Việt Nam - Official Music Video</a></main>'
+              : '<main><h1>Search results for nhạc thiếu nhi</h1>' +
+                '<a href="/watch?v=kids123">Nhạc Thiếu Nhi Vui Nhộn Cho Bé - music</a></main>') +
+            '</body></html>',
         });
       } else if (new URL(url).pathname === '/watch') {
         await route.fulfill({
@@ -139,6 +145,40 @@ try {
         !(await page.evaluate(() => !document.querySelector('video')?.paused)) ||
         (await page.locator('.__jev_badge').count()) !== 0) {
       throw new Error('YouTube navigation/search/playback smoke test failed');
+    }
+
+    // Regression for the actual user phrasing: the starting tab is unrelated,
+    // no ".com" and no "tìm" appear in the goal. The mocked results include
+    // an unrelated first video and a matching Đen Vâu rap link.
+    await page.goto('http://127.0.0.1:' + port + '/initial');
+    const rapGoal = 'mở youtube, bật cho tôi 1 bài rap của đen vâu';
+    const rapStart = await extension.evaluate(async ({ tabId, goal }) =>
+      chrome.runtime.sendMessage({ type: 'START_AGENT', tabId, goal }),
+    { tabId, goal: rapGoal });
+    if (!rapStart?.success) throw new Error('Natural-language goal did not start: ' + JSON.stringify(rapStart));
+    let rapProgress: any;
+    for (let i = 0; i < 120; i++) {
+      await new Promise(resolve => setTimeout(resolve, 100));
+      rapProgress = await extension.evaluate(async () =>
+        (await chrome.runtime.sendMessage({ type: 'GET_PROGRESS' }))?.progress);
+      if (rapProgress && !['running', 'paused'].includes(rapProgress.status)) break;
+    }
+    const rapResult = {
+      status: rapProgress?.status,
+      step: rapProgress?.currentStep,
+      url: page.url(),
+      playing: await page.evaluate(() => !document.querySelector('video')?.paused),
+      operations: (rapProgress?.logs || []).map((l: any) => l.operation).reverse(),
+      jevDecisionCalls: rapProgress?.timing?.decisionCalls,
+    };
+    console.log(JSON.stringify({ naturalLanguageRapTest: rapResult }));
+    if (rapResult.status !== 'done' ||
+        rapResult.step < 3 ||
+        !rapResult.url.startsWith('https://www.youtube.com/watch?v=denvau123') ||
+        !rapResult.playing ||
+        !rapResult.operations.includes('SEARCH (navigate)') ||
+        !rapResult.operations.includes('CLICK (YouTube recovery)')) {
+      throw new Error('Natural-language YouTube rap music workflow failed');
     }
 
     // Badge overlay regression: render numbered controls, disable overlay via

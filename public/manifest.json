@@ -1,7 +1,7 @@
 {
   "manifest_version": 3,
   "name": "Lumi Browser AI",
-  "version": "0.1.0",
+  "version": "0.1.1",
   "description": "Lumi Browser AI: Chrome side panel for page Q&A and Jev-powered browser actions.",
   "permissions": [
     "storage",
