@@ -1,11 +1,7 @@
-export type AIKind = 'chrome' | 'openai' | 'gemini' | 'ollama' | 'vllm';
-
-export interface AIConfig {
-  kind: AIKind;
-  model: string;
-  baseUrl: string;
-  apiKey: string;
-}
+import { DEFAULT_AI, PRESETS, resolveChatModel } from '../shared/ai-config';
+import type { AIConfig } from '../shared/ai-config';
+export { DEFAULT_AI, PRESETS };
+export type { AIConfig, AIKind } from '../shared/ai-config';
 
 export interface AIRequestOptions {
   signal?: AbortSignal;
@@ -13,18 +9,6 @@ export interface AIRequestOptions {
   onPartial?: (text: string) => void;
 }
 
-export const DEFAULT_AI: AIConfig = { kind: 'chrome', model: '', baseUrl: '', apiKey: '' };
-
-export const PRESETS: Record<AIKind, { baseUrl: string; model: string }> = {
-  chrome: { baseUrl: '', model: '' },
-  openai: { baseUrl: 'https://api.openai.com/v1', model: 'gpt-4.1-mini' },
-  gemini: {
-    baseUrl: 'https://generativelanguage.googleapis.com/v1beta/openai',
-    model: 'gemini-2.5-flash',
-  },
-  ollama: { baseUrl: 'http://127.0.0.1:11434/v1', model: 'qwen3:8b' },
-  vllm: { baseUrl: 'http://127.0.0.1:8000/v1', model: 'your-model-id' },
-};
 
 export interface ChatMessage {
   role: 'user' | 'assistant';
@@ -233,19 +217,7 @@ export async function askAI(
 ): Promise<string> {
   if (config.kind === 'chrome') return askChrome(messages, options);
 
-  const preset = PRESETS[config.kind];
-  if (!preset) throw new Error('Model provider không hợp lệ.');
-  const base = (config.baseUrl || preset.baseUrl).replace(/\/+$/, '');
-  const model = config.model || preset.model;
-  const key = config.apiKey.trim();
-
-  if (!key && config.kind !== 'ollama' && config.kind !== 'vllm') {
-    throw new Error('Chưa nhập API key.');
-  }
-  if (!/^https:\/\//.test(base) &&
-      !/^http:\/\/(localhost|127\.0\.0\.1)(:\d+)?(\/|$)/.test(base)) {
-    throw new Error('Chỉ cho phép HTTPS hoặc localhost khi kết nối model.');
-  }
+  const { baseUrl: base, model, apiKey: key } = resolveChatModel(config);
 
   options.onStatus?.(`Đang kết nối ${config.kind.toUpperCase()}...`);
   return withDeadline(async signal => {

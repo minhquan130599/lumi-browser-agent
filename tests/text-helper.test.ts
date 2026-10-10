@@ -2,6 +2,8 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { createFieldContext, generateFieldText, parseFieldText } from '../src/shared/text-helper';
 import { AppSettings, DEFAULT_SETTINGS, PageAction } from '../src/shared/types';
 
+const CUSTOM_DEFAULT_SETTINGS: AppSettings = { ...DEFAULT_SETTINGS, textHelperMode: 'custom' };
+
 const okResponse = (content: string) => ({
   ok: true,
   status: 200,
@@ -36,7 +38,7 @@ describe('Text Helper (TYPE_TEXT value generator)', () => {
     (global.fetch as any).mockResolvedValueOnce(okResponse(JSON.stringify({ text: 'Zurich' })));
 
     const settings: AppSettings = {
-      ...DEFAULT_SETTINGS,
+      ...CUSTOM_DEFAULT_SETTINGS,
       textHelper: {
         provider: 'deepseek',
         apiKey: 'test-text-key',
@@ -66,7 +68,7 @@ describe('Text Helper (TYPE_TEXT value generator)', () => {
     (global.fetch as any).mockResolvedValueOnce(okResponse('{"text": "London"}'));
 
     const settings: AppSettings = {
-      ...DEFAULT_SETTINGS,
+      ...CUSTOM_DEFAULT_SETTINGS,
       activeProvider: 'openrouter',
       openrouter: { apiKey: 'sk-or-shared-key', model: 'typesafe/jev-1.13', endpoint: '' },
       textHelper: { provider: 'openrouter', apiKey: '', baseUrl: '', model: '' },
@@ -88,8 +90,8 @@ describe('Text Helper (TYPE_TEXT value generator)', () => {
 
   it('does not share the OpenRouter key with a non-OpenRouter helper', async () => {
     const settings: AppSettings = {
-      ...DEFAULT_SETTINGS,
-      openrouter: { ...DEFAULT_SETTINGS.openrouter, apiKey: 'sk-or-shared-key' },
+      ...CUSTOM_DEFAULT_SETTINGS,
+      openrouter: { ...CUSTOM_DEFAULT_SETTINGS.openrouter, apiKey: 'sk-or-shared-key' },
       textHelper: { provider: 'openai', apiKey: '', baseUrl: '', model: '' },
     };
     await expect(
@@ -101,7 +103,7 @@ describe('Text Helper (TYPE_TEXT value generator)', () => {
   it('refuses to type when the model reports a missing value', async () => {
     (global.fetch as any).mockResolvedValueOnce(okResponse('{"text": null}'));
     const settings: AppSettings = {
-      ...DEFAULT_SETTINGS,
+      ...CUSTOM_DEFAULT_SETTINGS,
       textHelper: { provider: 'deepseek', apiKey: 'k', baseUrl: 'https://api.deepseek.com/v1', model: 'deepseek-chat' },
     };
     await expect(
@@ -112,7 +114,7 @@ describe('Text Helper (TYPE_TEXT value generator)', () => {
   it('surfaces provider errors instead of silently switching models', async () => {
     (global.fetch as any).mockResolvedValueOnce({ ok: false, status: 401, text: async () => 'bad key' });
     const settings: AppSettings = {
-      ...DEFAULT_SETTINGS,
+      ...CUSTOM_DEFAULT_SETTINGS,
       textHelper: { provider: 'openrouter', apiKey: 'k', baseUrl: 'https://openrouter.ai/api/v1', model: 'google/gemini-x' },
     };
     await expect(
@@ -139,19 +141,19 @@ describe('Text Helper (TYPE_TEXT value generator)', () => {
 describe('describeHelperKey', () => {
   it('explains where the key comes from, or exactly what is missing', async () => {
     const { describeHelperKey } = await import('../src/shared/text-helper');
-    const base = { ...DEFAULT_SETTINGS, openrouter: { ...DEFAULT_SETTINGS.openrouter, apiKey: 'sk-or' } };
+    const base = { ...CUSTOM_DEFAULT_SETTINGS, openrouter: { ...CUSTOM_DEFAULT_SETTINGS.openrouter, apiKey: 'sk-or' } };
     expect(describeHelperKey(base).source).toBe('openrouter');
     expect(describeHelperKey({ ...base, textHelper: { ...base.textHelper, apiKey: 'own' } }).source).toBe('helper');
     const deepseek = describeHelperKey({ ...base, textHelper: { provider: 'deepseek', apiKey: '', baseUrl: '', model: '' } });
     expect(deepseek.source).toBeNull();
     expect(deepseek.message).toMatch(/set to "deepseek".*api\.deepseek\.com.*only shared for OpenRouter/);
-    const noKeys = describeHelperKey(DEFAULT_SETTINGS);
+    const noKeys = describeHelperKey(CUSTOM_DEFAULT_SETTINGS);
     expect(noKeys.source).toBeNull();
     expect(noKeys.message).toMatch(/Enter an OpenRouter key/);
   });
 
   it('puts the same explanation into the TYPE_TEXT error', async () => {
-    const settings: AppSettings = { ...DEFAULT_SETTINGS, textHelper: { provider: 'openai', apiKey: '', baseUrl: '', model: '' } };
+    const settings: AppSettings = { ...CUSTOM_DEFAULT_SETTINGS, textHelper: { provider: 'openai', apiKey: '', baseUrl: '', model: '' } };
     await expect(
       generateFieldText(settings, { goal: 'g', field: {}, page: { title: '', text: '' }, recent_actions: [] })
     ).rejects.toThrow(/set to "openai".*api\.openai\.com.*only shared for OpenRouter/);

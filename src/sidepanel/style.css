@@ -4,4 +4,11 @@
 .agent-badges-toolbar{display:flex;align-items:center;justify-content:space-between;gap:9px;margin:0 16px 8px;padding:7px 10px;background:#ffffff09;border:1px solid #ffffff1a;border-radius:11px;color:#b8b0dc;font-size:11px}
 .agent-badges-toolbar button{background:#7963c72a;color:#e2d9ff;border:1px solid #aa91e566;border-radius:9px;padding:6px 10px;font-size:11px;white-space:nowrap;cursor:pointer}
 .agent-badges-toolbar button:hover:not(:disabled){background:#8c6bea55}
-.agent-badges-toolbar button:disabled{opacity:.5;cursor:wait}
+.agent-badges-toolbar button:disabled{opacity:.5;cursor:wait}.helper-sharing{margin-top:16px;padding:12px;border-radius:13px;background:#8c6bec13;border:1px solid #a58ceb39}
+.helper-sharing>strong{display:block;font-size:12px;margin-bottom:10px}
+.helper-choice{display:flex!important;align-items:flex-start;gap:9px;margin:0!important;padding:8px 0;cursor:pointer}
+.helper-choice input{width:auto!important;accent-color:#aa81ff;flex-shrink:0;margin-top:3px}
+.helper-choice span{display:flex;flex-direction:column;gap:3px}
+.helper-choice b{color:#ebe3ff;font-size:12px}
+.helper-choice small{color:#aaa2ce;font-size:11px;line-height:1.5}
+.helper-summary{font-size:11px;line-height:1.65;color:#bab0e3;margin:7px 0 0}

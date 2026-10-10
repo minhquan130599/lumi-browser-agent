@@ -72,6 +72,23 @@ Trong Lumi: provider `Ollama`, base URL `http://127.0.0.1:11434/v1`, model `qwen
 
 > Page Q&A chỉ đọc nội dung trang hiện tại. Prototype trích xuất tối đa khoảng 16.000 ký tự. Nội dung trang gửi tới cloud AI nếu bạn chọn provider cloud. Không dùng để xử lý bí mật hoặc thông tin riêng tư nếu chưa kiểm tra cách dữ liệu được chia sẻ.
 
+## Chat AI và Text Helper dùng chung model
+
+**Mặc định:** Text Helper kế thừa trực tiếp provider, model ID, Base URL và API key đang chọn trong **Lumi Side Panel → ⚙ Cấu hình AI**. Không phải nhập key hay model thêm lần nữa. Luồng này dùng cho các thao tác `TYPE_TEXT` cần AI sinh nội dung; với những ô tìm kiếm đã có sẵn từ khóa trong yêu cầu, Agent vẫn ưu tiên nhập trực tiếp khi có thể.
+
+- **Gemini / OpenAI:** dùng chung cấu hình API key từ phần Chat AI.
+- **Ollama / vLLM:** dùng chung server OpenAI-compatible đã cấu hình; HTTP chỉ được chấp nhận trên localhost/mạng LAN riêng, hoặc HTTPS. Có thể không cần key nếu server local không yêu cầu.
+- **Chrome Built-in AI:** không cần key; bản Chrome và thiết bị phải hỗ trợ Prompt API, và **Side Panel cần đang mở** để background chuyển yêu cầu sinh text qua đó. Tiếng Việt vẫn có thể không được model hỗ trợ chính thức. Nếu Side Panel đóng hoặc model từ chối, agent sẽ báo lỗi rõ ràng và không nhập nội dung đoán mò.
+
+Đổi chế độ ngay trong **Side Panel → ⚙ → Text Helper** hoặc vào **Cài đặt Jev / Text helper → Text Helper — TYPE_TEXT**:
+
+- **Dùng chung Chat AI (mặc định):** sử dụng cùng Chat AI, lưu cấu hình trong `lumi_ai`.
+- **Model riêng (nâng cao):** giữ các trường Provider/Model/API Key/Base URL cũ trong `jev_settings.textHelper`. Khi chuyển về dùng chung, cấu hình nâng cao không bị xóa.
+
+Sau khi nâng cấp, người dùng đã tùy chỉnh Text Helper riêng sẽ tiếp tục ở chế độ model riêng; cài đặt cũ chưa thay đổi được chuyển sang dùng chung Chat AI.
+
+**Để kiểm thử:** `npm run check` để chạy TypeScript, unit tests và build. Có Chromium của Playwright, chạy `npx tsx scripts/e2e-shared-helper.ts` (hoặc trỏ `CHROMIUM_PATH` tới Chromium) để test kết nối background ↔ Side Panel của Chrome AI cùng thao tác chuyển chế độ. Bài test sử dụng Prompt API giả lập, không gọi model thật.
+
 ## Dùng Jev để thao tác trang
 
 1. Mở trang web cần thao tác.

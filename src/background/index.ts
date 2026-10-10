@@ -43,6 +43,10 @@ async function resolveTabId(explicit?: number): Promise<number> {
 
 chrome.runtime.onMessage.addListener(
   (message: ExtensionMessage, _sender, sendResponse: (response: unknown) => void) => {
+    // This RPC must be handled by an open trusted Side Panel, not by the
+    // background's generic async listener. Returning true without responding
+    // here would leave a pending message channel until worker suspension.
+    if (message.type === 'LUMI_CHROME_TEXT_HELPER') return false;
     (async () => {
       try {
         switch (message.type) {

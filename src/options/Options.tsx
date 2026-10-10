@@ -1,13 +1,13 @@
 import React, { useEffect, useState } from 'react';
 import { callJevProvider } from '../shared/providers';
-import { describeHelperKey } from '../shared/text-helper';
+import { TextHelperSettings } from './TextHelperSettings';
+import { DEFAULT_AI, normalizeAIConfig } from '../shared/ai-config';
+import type { AIConfig } from '../shared/ai-config';
 import {
   AppSettings,
   DEFAULT_SETTINGS,
   JevProviderType,
   JevRequest,
-  TEXT_HELPER_PRESETS,
-  TextHelperProvider,
 } from '../shared/types';
 
 /** A minimal, valid decision request used by the connection test. */
@@ -34,6 +34,7 @@ const TEST_REQUEST: Omit<JevRequest, 'model'> = {
 
 export const Options: React.FC = () => {
   const [settings, setSettings] = useState<AppSettings>(DEFAULT_SETTINGS);
+  const [chatAI, setChatAI] = useState<AIConfig>(DEFAULT_AI);
   const [activeTab, setActiveTab] = useState<JevProviderType>('openrouter');
   const [savedToast, setSavedToast] = useState(false);
   const [testingStatus, setTestingStatus] = useState<string | null>(null);
@@ -45,6 +46,14 @@ export const Options: React.FC = () => {
         setActiveTab(res.settings.activeProvider || 'openrouter');
       }
     });
+    chrome.storage.local.get(['lumi_ai'], result => setChatAI(normalizeAIConfig(result.lumi_ai)));
+    const onStorageChanged = (changes: { lumi_ai?: chrome.storage.StorageChange }, area: string) => {
+      if (area === 'local' && changes.lumi_ai) {
+        setChatAI(normalizeAIConfig(changes.lumi_ai.newValue));
+      }
+    };
+    chrome.storage.onChanged.addListener(onStorageChanged);
+    return () => chrome.storage.onChanged.removeListener(onStorageChanged);
   }, []);
 
   const handleSave = () => {
@@ -88,14 +97,6 @@ export const Options: React.FC = () => {
         apiToken: settings.cloudflare.apiToken,
       },
       textHelper: { ...DEFAULT_SETTINGS.textHelper, apiKey: settings.textHelper.apiKey },
-    });
-  };
-
-  const handleTextProviderChange = (provider: TextHelperProvider) => {
-    const preset = TEXT_HELPER_PRESETS[provider];
-    setSettings({
-      ...settings,
-      textHelper: { ...settings.textHelper, provider, baseUrl: preset.baseUrl, model: preset.model },
     });
   };
 
@@ -311,81 +312,8 @@ export const Options: React.FC = () => {
           {testingStatus && <div style={styles.testStatusBanner}>{testingStatus}</div>}
         </div>
 
-        {/* Text Helper Generation Model */}
-        <div style={styles.section}>
-          <label style={styles.sectionLabel}>
-            Text Generation Helper (for TYPE_TEXT operations)
-          </label>
-          <p style={styles.helpText}>
-            When Jev selects an input box to fill, this lightweight LLM generates the text payload from the goal.
-            Changing the provider resets Base URL and Model to that provider's defaults.
-          </p>
-          <div style={styles.grid2}>
-            <div style={styles.field}>
-              <label style={styles.label}>Provider / Service</label>
-              <select
-                style={styles.input}
-                value={settings.textHelper.provider}
-                onChange={(e) => handleTextProviderChange(e.target.value as TextHelperProvider)}
-              >
-                <option value="openrouter">OpenRouter (Default)</option>
-                <option value="deepseek">DeepSeek</option>
-                <option value="openai">OpenAI / Compatible API</option>
-                <option value="ollama">Ollama local</option>
-                <option value="vllm">vLLM local</option>
-              </select>
-            </div>
-
-            <div style={styles.field}>
-              <label style={styles.label}>Model Name</label>
-              <input
-                type="text"
-                style={styles.input}
-                value={settings.textHelper.model}
-                onChange={(e) =>
-                  setSettings({
-                    ...settings,
-                    textHelper: { ...settings.textHelper, model: e.target.value },
-                  })
-                }
-              />
-            </div>
-          </div>
-
-          <div style={styles.field}>
-            <label style={styles.label}>API Key</label>
-            <input
-              type="password"
-              style={styles.input}
-              placeholder="API Key for Text Model (optional if OpenRouter key is set)"
-              value={settings.textHelper.apiKey}
-              onChange={(e) =>
-                setSettings({
-                  ...settings,
-                  textHelper: { ...settings.textHelper, apiKey: e.target.value },
-                })
-              }
-            />
-          </div>
-
-          <p style={{ ...styles.helpText, color: describeHelperKey(settings).source ? '#86efac' : '#fca5a5' }}>
-            {describeHelperKey(settings).message}
-          </p>
-          <div style={styles.field}>
-            <label style={styles.label}>Base URL</label>
-            <input
-              type="text"
-              style={styles.input}
-              value={settings.textHelper.baseUrl}
-              onChange={(e) =>
-                setSettings({
-                  ...settings,
-                  textHelper: { ...settings.textHelper, baseUrl: e.target.value },
-                })
-              }
-            />
-          </div>
-        </div>
+        {/* Chat AI sharing is the default; advanced mode preserves custom settings. */}
+        <TextHelperSettings settings={settings} setSettings={setSettings} chatAI={chatAI} />
 
         {/* Agent Execution Settings */}
         <div style={styles.section}>

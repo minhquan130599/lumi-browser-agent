@@ -40,8 +40,12 @@ export const TEXT_HELPER_PRESETS: Record<TextHelperProvider, { baseUrl: string; 
   vllm: { baseUrl: 'http://127.0.0.1:8000/v1', model: 'your-model-id' },
 };
 
+export type TextHelperMode = 'shared' | 'custom';
+
 export interface AppSettings {
   activeProvider: JevProviderType;
+  /** Share the Side Panel chat model by default; 'custom' preserves a separate helper. */
+  textHelperMode: TextHelperMode;
   typesafe: TypeSafeConfig;
   openrouter: OpenRouterConfig;
   cloudflare: CloudflareConfig;
@@ -60,6 +64,7 @@ export interface AppSettings {
 
 export const DEFAULT_SETTINGS: AppSettings = {
   activeProvider: 'openrouter',
+  textHelperMode: 'shared',
   typesafe: {
     apiKey: '',
     model: 'jev-latest',
@@ -115,6 +120,19 @@ export function mergeSettings(stored: Partial<AppSettings> | undefined | null): 
     cloudflare: { ...DEFAULT_SETTINGS.cloudflare, ...(s.cloudflare || {}) },
     textHelper: { ...DEFAULT_SETTINGS.textHelper, ...(s.textHelper || {}) },
   };
+
+  // Preserve deliberately customized helper configurations on upgrades.
+  // For fresh installs and untouched old defaults, inherit Chat AI instead.
+  if (s.textHelperMode !== 'shared' && s.textHelperMode !== 'custom') {
+    const old = s.textHelper;
+    const defaultHelper = DEFAULT_SETTINGS.textHelper;
+    merged.textHelperMode = old && (
+      old.provider !== undefined && old.provider !== defaultHelper.provider ||
+      Boolean((old.apiKey || '').trim()) ||
+      old.baseUrl !== undefined && old.baseUrl !== defaultHelper.baseUrl && Boolean(old.baseUrl.trim()) ||
+      old.model !== undefined && old.model !== defaultHelper.model && Boolean(old.model.trim())
+    ) ? 'custom' : 'shared';
+  }
 
   const jevModel = (merged.openrouter.model || '').trim();
   merged.openrouter.model = OBSOLETE_OPENROUTER_JEV_MODELS[jevModel] || jevModel || DEFAULT_SETTINGS.openrouter.model;
@@ -323,6 +341,13 @@ export interface AgentProgress {
 // Messages between Extension components
 export type ExtensionMessage =
   | { type: 'LUMI_READ_PAGE' }
+  /** Worker to Side Panel: generate JSON field text using Chrome Built-in AI. */
+  | { type: 'LUMI_CHROME_TEXT_HELPER'; context: {
+      goal: string;
+      field: { label?: string; role?: string; value?: string };
+      page: { title: string; text: string };
+      recent_actions: Array<{ action: string; text?: string }>;
+    } }
   | { type: 'GET_SETTINGS' }
   | { type: 'SETTINGS_RESPONSE'; settings: AppSettings }
   | { type: 'SAVE_SETTINGS'; settings: AppSettings }

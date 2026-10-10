@@ -2,12 +2,14 @@ import { afterEach, describe, expect, it, vi } from 'vitest';
 import { describeHelperKey, generateFieldText } from '../src/shared/text-helper';
 import { DEFAULT_SETTINGS } from '../src/shared/types';
 
+const CUSTOM_DEFAULT_SETTINGS = { ...DEFAULT_SETTINGS, textHelperMode: 'custom' as const };
+
 afterEach(() => vi.unstubAllGlobals());
 
 describe('local Text Helper', () => {
   it('supports keyless Ollama on private LAN and preserves the model id', async () => {
     const settings = {
-      ...DEFAULT_SETTINGS,
+      ...CUSTOM_DEFAULT_SETTINGS,
       textHelper: {
         provider: 'ollama' as const,
         apiKey: '',
@@ -36,7 +38,7 @@ describe('local Text Helper', () => {
 
   it('never sends an unauthenticated request to a public URL', async () => {
     const settings = {
-      ...DEFAULT_SETTINGS,
+      ...CUSTOM_DEFAULT_SETTINGS,
       textHelper: {
         provider: 'vllm' as const,
         apiKey: '',
