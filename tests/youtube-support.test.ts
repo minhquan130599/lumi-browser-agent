@@ -9,6 +9,23 @@ const actions: PageAction[] = [
   { id: 'other', kind: 'click', node: 4, role: 'link', label: 'Nhạc thư giãn cho người lớn', href: '/watch?v=ambient' },
 ];
 
+describe('artist + song constraint', () => {
+  it('selects the actual Lối Nhỏ recording and rejects other artists/channels', () => {
+    const sample: PageAction[] = [
+      { id: 'channel', node: 10, role: 'link', kind: 'click',
+        label: 'Dunghoangpham và Dunghoangpham Ballad', href: '/channel/dunghoangpham' },
+      { id: 'wrong', node: 11, role: 'link', kind: 'click',
+        label: 'Lối Nhỏ - Sơn Tùng', href: '/watch?v=otherArtist' },
+      { id: 'correct', node: 12, role: 'link', kind: 'click',
+        label: 'Đen Vâu - Lối Nhỏ (Official MV)', href: '/watch?v=loinho123' },
+    ];
+    expect(suggestYoutubeVideo({ url: 'https://www.youtube.com/results', actions: sample },
+      'lối nhỏ Đen Vâu', 'lối nhỏ', 'Đen Vâu')?.id).toBe('correct');
+    expect(suggestYoutubeVideo({ url: 'https://www.youtube.com/results', actions: sample.slice(0, 2) },
+      'lối nhỏ Đen Vâu', 'lối nhỏ', 'Đen Vâu')).toBeNull();
+  });
+});
+
 describe('YouTube result recovery', () => {
   it('selects a relevant video and not an ad or other site link', () => {
     expect(suggestYoutubeVideo({

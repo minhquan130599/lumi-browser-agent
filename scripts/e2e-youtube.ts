@@ -65,13 +65,20 @@ try {
       if (new URL(url).pathname === '/results') {
         const search = (new URL(url).searchParams.get('search_query') || '').toLowerCase();
         const rap = search.includes('rap');
-        const exactSong = search.normalize('NFKD').replace(/[\u0300-\u036f]/g, '')
-          .replace(/đ/g, 'd').includes('ngay con doi muoi');
+        const normalizedSearch = search.normalize('NFKD')
+          .replace(/[̀-ͯ]/g, '').replace(/đ/g, 'd');
+        const loiNho = normalizedSearch.includes('loi nho') && normalizedSearch.includes('den vau');
+        const exactSong = normalizedSearch.includes('ngay con doi muoi');
         await route.fulfill({
           status: 200, contentType: 'text/html; charset=utf-8',
           body: '<!doctype html><html><head><title>YouTube search results</title></head><body>' +
-            (exactSong
-              ? '<main><h1>Results for Ngày Còn Đôi Mươi</h1>' +
+            (loiNho
+              ? '<main><h1>Lối Nhỏ Đen Vâu</h1>' +
+                '<a href="/channel/dunghoangpham">Dunghoangpham và Dunghoangpham Ballad</a>' +
+                '<a href="/watch?v=otherArtist">Lối Nhỏ - Sơn Tùng Official</a>' +
+                '<a href="/watch?v=loinho123">Đen Vâu - LỐI NHỎ (Official MV)</a></main>'
+              : exactSong
+                ? '<main><h1>Results for Ngày Còn Đôi Mươi</h1>' +
                 '<a href="/watch?v=wrong123">BÀI CA MÙA HẠ Remix - Xanh</a>' +
                 '<a href="/watch?v=correct123">NGÀY CÒN ĐÔI MƯƠI - Official Music Video</a></main>'
               : rap
@@ -87,6 +94,8 @@ try {
         const songName = videoId === 'correct123' ? 'NGÀY CÒN ĐÔI MƯƠI - Official Audio'
           : videoId === 'wrong123' ? 'BÀI CA MÙA HẠ Remix'
           : videoId === 'denvau123' ? 'Đen Vâu Rap Việt Nam - Official Music Video'
+          : videoId === 'loinho123' ? 'Đen Vâu - LỐI NHỎ (Official MV)'
+          : videoId === 'otherArtist' ? 'Lối Nhỏ - Sơn Tùng'
           : 'Nhạc Thiếu Nhi Vui Nhộn Cho Bé';
         await route.fulfill({
           status: 200, contentType: 'text/html; charset=utf-8',
@@ -253,6 +262,39 @@ try {
         !mediaResult.url.includes('v=following123') || !mediaResult.playing ||
         mediaResult.jevDecisionCalls !== 0 || mediaResult.verification?.ok !== true) {
       throw new Error('P0 media next must verify video ID change and playback without Jev.');
+    }
+
+    // Original user regression: a music command on an existing YouTube tab,
+    // without "open YouTube", must search, reject unrelated channels/videos,
+    // verify the named title/artist and actual playing state.
+    const namedGoal = 'bật bài lối nhỏ của đen vấu';
+    const namedStart = await extension.evaluate(async ({ tabId, goal }) =>
+      chrome.runtime.sendMessage({ type: 'START_AGENT', tabId, goal }), { tabId, goal: namedGoal });
+    if (!namedStart?.success) throw new Error('Contextual song request did not start.');
+    let namedProgress: any;
+    for (let i = 0; i < 160; i++) {
+      await new Promise(resolve => setTimeout(resolve, 100));
+      namedProgress = await extension.evaluate(async () =>
+        (await chrome.runtime.sendMessage({ type: 'GET_PROGRESS' }))?.progress);
+      if (namedProgress && !['running', 'paused'].includes(namedProgress.status)) break;
+    }
+    const namedResult = {
+      status: namedProgress?.status,
+      steps: namedProgress?.currentStep,
+      url: page.url(),
+      playing: await page.evaluate(() => !document.querySelector('video')?.paused),
+      verification: namedProgress?.verification,
+      operations: (namedProgress?.logs || []).map((log: any) => log.operation).reverse(),
+      jevDecisionCalls: namedProgress?.timing?.decisionCalls,
+    };
+    console.log(JSON.stringify({ contextualExactSongRegression: namedResult }));
+    if (namedResult.status !== 'done' || namedResult.steps !== 2 ||
+        !namedResult.url.includes('v=loinho123') || !namedResult.playing ||
+        namedResult.jevDecisionCalls !== 0 || namedResult.verification?.ok !== true ||
+        !namedResult.verification.reason.includes('Đen Vâu') ||
+        !namedResult.operations.includes('SEARCH (navigate)') ||
+        !namedResult.operations.includes('CLICK (YouTube recovery)')) {
+      throw new Error('Contextual song request opened a wrong channel, wrong artist or falsely marked DONE.');
     }
 
     // Badge overlay regression: render numbered controls, disable overlay via

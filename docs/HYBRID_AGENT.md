@@ -1,6 +1,14 @@
-# Lumi Hybrid Browser Agent v0.2.0 — P0 through P3
+# Lumi Hybrid Browser Agent v0.2.1 — P0 through P3
 
 The extension now separates understanding, execution, and outcome verification. Existing Jev and chat provider configurations are preserved.
+
+## v0.2.1: contextual YouTube music search fix
+
+A spoken request like "bật bài lối nhỏ của đen vấu" on an **already open YouTube tab** is now recognized as a **search and play** task, even without saying "mở YouTube" again. Lumi uses the YouTube results URL (functionally equivalent to entering the search box and submitting) with the normalized query "lối nhỏ Đen Vâu". It distinguishes the song title "Lối Nhỏ" from the artist "Đen Vâu" (including the reported typo) before choosing a visible video.
+
+The search path ignores unrelated channel/profile links and wrong-artist songs, attempts limited scrolling while results render and reports BLOCKED rather than choosing a random link. DONE requires the actual video title, the artist from the title/channel, and a playing media element. An unrelated DOM change never satisfies a playback command.
+
+If the optional Chat AI Planner fails to return a plan, its error is retained in diagnostics as plannerFailure and a PLAN (fallback) trace entry. This distinguishes provider/timeout/model-format failures from action failures. The normal YouTube search fast path does not require the Planner or a Jev decision.
 
 ## P0 — deterministic media controls and independent verification
 
@@ -56,7 +64,7 @@ For production, measure verified completion, false DONE, replans, successful act
 
 1. In the project directory, run npm install if dependencies are missing, then npm run check.
 2. In chrome://extensions, Load unpacked from the dist directory. For an installed version, Reload and reopen the Side Panel.
-3. Confirm extension version 0.2.0.
+3. Confirm extension version 0.2.1.
 4. Configure Chat AI for planning, Jev/tev1 for DOM decisions, and optionally explicitly enable Vision fallback under Jev Settings.
 5. Open any YouTube watch video and ask "chuyển bài tiếp". The diagnostics should show MEDIA_NEXT, zero Jev decisions, and actual verification of a changed video ID plus playback.
 

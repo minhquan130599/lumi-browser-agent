@@ -8,6 +8,7 @@ export interface NavigationIntent {
   searchQuery?: string;
   /** Specific track named by the user, not a broad artist/genre search. */
   requestedTitle?: string;
+  requestedArtist?: string;
   playVideo: boolean;
   navigationOnly: boolean;
   modelGoal: string;
@@ -52,6 +53,16 @@ function isNavigationOnly(suffix: string): boolean {
 interface YoutubeSearch {
   query: string;
   requestedTitle?: string;
+  requestedArtist?: string;
+}
+
+/** Conservative artist spelling normalization for the exact Đen Vâu name. */
+function canonicalArtist(raw: string): string {
+  const artist = raw.trim().replace(/[.,!?;:]+$/u, '').trim();
+  const folded = artist.toLowerCase().normalize('NFKD')
+    .replace(/[\u0300-\u036f]/gu, '').replace(/đ/gu, 'd')
+    .replace(/\s+/gu, ' ').trim();
+  return folded === 'den vau' ? 'Đen Vâu' : artist;
 }
 
 function youtubeSearchTerms(suffix: string): YoutubeSearch | undefined {
@@ -69,10 +80,14 @@ function youtubeSearchTerms(suffix: string): YoutubeSearch | undefined {
   // "bật 1 bài rap của Đen Vâu" is an artist/genre request.
   const namedSong = /^(?:(?:một|1|one|an?)\s+)?(?:bài(?:\s+hát)?|ca\s+khúc|bản\s+nhạc|song|track)\s+(.+)/iu.exec(target.trim());
   const titleCandidate = namedSong?.[1]?.trim().replace(/^["'“”‘’]+|["'“”‘’]+$/gu, '') || '';
-  const titleWords = titleCandidate.split(/\s+/u).filter(Boolean);
-  const isGenre = /^(?:nhạc|rap|hát|thiếu\s+nhi|music)(?:\s|$)/iu.test(titleCandidate);
-  const requestedTitle = titleWords.length >= 3 && !isGenre && !/^(?:của|do|by)\s+/iu.test(titleCandidate)
-    ? titleCandidate : undefined;
+  // "Lối Nhỏ của Đen Vấu" means a 2-word title and a distinct artist.
+  const artistPart = /^(.+?)\s+(?:của|do|by)\s+(.+)$/iu.exec(titleCandidate);
+  const title = (artistPart?.[1] || titleCandidate).trim();
+  const titleWords = title.split(/\s+/u).filter(Boolean);
+  const isGenre = /^(?:nhạc|rap|hát|thiếu\s+nhi|music)(?:\s|$)/iu.test(title);
+  const requestedTitle = titleWords.length >= 2 && !isGenre && !/^(?:của|do|by)\s+/iu.test(title)
+    ? title : undefined;
+  const requestedArtist = requestedTitle && artistPart?.[2] ? canonicalArtist(artistPart[2]) : undefined;
 
   let query = target
     .split(/\s+(?:(?:và|rồi|sau\s+đó|then|and)\s+)?(?:bật|phát|play|mở|xem|nghe)\s+(?:cho|để|video|it|tôi|mình|me)\b/iu)[0]
@@ -87,9 +102,39 @@ function youtubeSearchTerms(suffix: string): YoutubeSearch | undefined {
   query = query.replace(/^(?:bài|bản|video|track)\s+/iu, '');
   query = query.replace(/\s+(?:của|do|by)\s+/giu, ' ');
   query = compact(query.replace(/\s+/gu, ' '));
+  if (requestedTitle && requestedArtist) query = compact(requestedTitle + ' ' + requestedArtist);
   // Never autoplay from a search consisting solely of an ambiguous filler.
   if (!query || /^(?:bài|bản|hát|song|track|video)$/iu.test(query)) return undefined;
-  return query.length >= 2 && query.length <= 160 ? { query, requestedTitle } : undefined;
+  return query.length >= 2 && query.length <= 160 ? { query, requestedTitle, requestedArtist } : undefined;
+}
+
+/**
+ * Interpret implied music instructions ONLY on an already opened YouTube tab.
+ * Search is navigated via the normal YouTube /results URL instead of relying
+ * on a partially observed searchbox in a dynamic watch page.
+ */
+export function parseContextualYoutubeIntent(userGoal: string, currentUrl: string): NavigationIntent | null {
+  let current: URL;
+  try { current = new URL(currentUrl); } catch { return null; }
+  if (current.protocol !== 'https:' || !youtubeHost(current.hostname.toLowerCase())) return null;
+  const goal = userGoal.slice(0, 500).replace(/\s+/gu, ' ').trim()
+    .replace(/^(?:(?:hãy|vui lòng|giúp tôi|giúp mình|cho tôi|cho mình|please)\s+)+/iu, '');
+  if (/^(?:hướng dẫn|giải thích|cách|làm sao|tại sao|how|why|đừng|không|do not|don't)(?:\s|$)/iu.test(goal)) return null;
+  if (!/^(?:bật|phát|nghe|play|tìm(?:\s+kiếm)?|search(?:\s+for)?|find)\s+/iu.test(goal)) return null;
+  const search = youtubeSearchTerms(goal);
+  if (!search) return null;
+  const playVideo = /^(?:bật|phát|nghe|play)\s+/iu.test(goal);
+  const url = new URL('https://www.youtube.com/results');
+  url.searchParams.set('search_query', search.query);
+  return {
+    url: url.toString(), hostname: url.hostname,
+    searchQuery: search.query, requestedTitle: search.requestedTitle,
+    requestedArtist: search.requestedArtist, playVideo, navigationOnly: false,
+    modelGoal: 'Search YouTube for "' + search.query + '". ' +
+      (search.requestedTitle ? 'Choose ONLY a video containing full song title "' + search.requestedTitle + '". ' : '') +
+      (search.requestedArtist ? 'Verify its artist is "' + search.requestedArtist + '". ' : '') +
+      (playVideo ? 'Confirm the requested song is playing before DONE.' : 'Show matching results.'),
+  };
 }
 
 /** Returns null when the user does not explicitly command navigation. */
@@ -130,6 +175,7 @@ export function parseNavigationIntent(userGoal: string): NavigationIntent | null
   const youtubeSearch = isYoutube ? youtubeSearchTerms(cleanedSuffix) : undefined;
   const searchQuery = youtubeSearch?.query;
   const requestedTitle = youtubeSearch?.requestedTitle;
+  const requestedArtist = youtubeSearch?.requestedArtist;
   const playVideo = isYoutube && (
     /(?:^|[\s,;])(?:bật|phát|nghe|play|xem)(?=$|[\s,;.!?])/iu.test(cleanedSuffix) &&
     !/(?:không|đừng|do\s+not|don't)\s+(?:bật|phát|play)/iu.test(cleanedSuffix)
@@ -146,7 +192,8 @@ export function parseNavigationIntent(userGoal: string): NavigationIntent | null
       (requestedTitle
         ? 'ONLY choose a result with the full matching song title "' + requestedTitle + '". Never play a generic result. '
         : 'choose a relevant matching video. ') +
-      (playVideo ? 'Verify the requested video title and start playback. Do not mark DONE until the correct video is playing.' : 'Show the matching video page.')
+      (requestedArtist ? 'The artist must match "' + requestedArtist + '". ' : '') +
+      (playVideo ? 'Verify the requested video title and artist, then start playback. Do not mark DONE until the correct video is playing.' : 'Show the matching video page.')
     : navigationOnly
       ? 'Navigate to ' + url.origin + '.'
       : 'You are already at ' + url.hostname + '. Complete the remaining task: ' + (cleanedSuffix || userGoal);
@@ -156,6 +203,7 @@ export function parseNavigationIntent(userGoal: string): NavigationIntent | null
     hostname: url.hostname,
     searchQuery,
     requestedTitle,
+    requestedArtist,
     playVideo,
     navigationOnly,
     modelGoal,

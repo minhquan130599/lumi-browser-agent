@@ -72,12 +72,18 @@ function boot(): void {
           const headingText = heading?.textContent?.replace(/\s+/g, ' ').trim() || '';
           const pageTitle = document.title.replace(/\s+-\s+YouTube(?:\s+.*)?$/iu, '').trim();
           const videoTitle = headingText || (/^YouTube$/iu.test(pageTitle) ? '' : pageTitle);
+          const channel = document.querySelector(
+            'ytd-watch-metadata ytd-channel-name a, ytd-video-owner-renderer #channel-name a, ' +
+            '#owner #channel-name a, #upload-info ytd-channel-name a, #channel-name a'
+          );
+          const videoChannel = channel?.textContent?.replace(/\s+/g, ' ').trim() || '';
           sendResponse({
             found: Boolean(video),
             playing: Boolean(video && !video.paused && !video.ended),
             paused: Boolean(video?.paused),
             readyState: video?.readyState ?? 0,
             videoTitle,
+            videoChannel,
           });
           return false;
         }

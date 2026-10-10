@@ -345,6 +345,8 @@ export interface AgentProgress {
   plan?: { steps: string[]; activeIndex: number; successCriteria: string; source: "chat_ai" | "fallback" };
   verification?: { ok: boolean; reason: string };
   plannerCalls?: number;
+  /** Error summary retained when planning falls back to Jev; never overwritten by completion verifier. */
+  plannerFailure?: string;
   replans?: number;
 }
 

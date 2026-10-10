@@ -14,6 +14,11 @@ export function verifyGenericDone(
     verified: false, reason: 'No browser action produced an observable state change.'
   };
   const g = goal.toLowerCase();
+  // No generic model DONE for media playback: require actual playing state
+  // and matching requested track via the dedicated YouTube verifier.
+  if (/(?:bật|phát|nghe|play|mở)\s+(?:(?:cho\s+(?:tôi|mình)\s+))?(?:(?:một|1)\s+)?(?:bài|video|ca\s+khúc|bản\s+nhạc|nhạc)(?:\s|$)/iu.test(g)) {
+    return { verified: false, reason: 'Playback requires matching video title, artist and actual playing state.' };
+  }
   if (/(?:\bapi\b|endpoint|swagger|lấy danh sách|fetch response)/iu.test(g)) {
     const text = snapshot.text.slice(0, 3000);
     if (!/(?:response body|server response|status code|response code|\b200\b|json)/iu.test(text)) {

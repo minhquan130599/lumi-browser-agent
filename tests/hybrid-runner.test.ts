@@ -88,6 +88,19 @@ describe('P1 ReAct micro-goals and replanning in AgentRunner', () => {
     expect(planner).toHaveBeenCalledOnce();
   });
 
+  it('keeps the planner failure reason even after generic verification finishes', async () => {
+    planner.mockRejectedValueOnce(new Error('Invalid JSON from Chat AI planner'));
+    jev.mockImplementation(async () => choice(stage === 0 ? 'CLICK' : 'DONE'));
+    const runner = new AgentRunner();
+    runner.setSettings({ ...DEFAULT_SETTINGS, trustedInput: false, stepDelayMs: 0, maxSteps: 8 });
+    await runner.start('Open the first result', 7);
+    expect(runner.getProgress().status).toBe('done');
+    expect(runner.getProgress().plan?.source).toBe('fallback');
+    expect(runner.getProgress().plannerFailure).toContain('Invalid JSON');
+    expect(runner.getProgress().verification?.ok).toBe(true);
+    expect(runner.getProgress().logs.some(log => log.operation === 'PLAN (fallback)')).toBe(true);
+  });
+
   it('replans once after a genuine BLOCKED and then completes a fresh subgoal', async () => {
     planner.mockResolvedValueOnce({
       intent: 'browser_task', subgoals: ['Try the first route'], successCriteria: 'Results ready'

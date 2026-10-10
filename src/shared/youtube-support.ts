@@ -22,6 +22,16 @@ export function titleMatchesRequestedSong(videoTitle: string, requestedTitle: st
     (' ' + title + ' ').includes(' ' + requested + ' ');
 }
 
+/** The artist must appear as a full phrase in the title OR in verified channel metadata. */
+export function artistMatchesRequested(videoTitle: string, channelName: string, requestedArtist: string): boolean {
+  const artist = normalizeVideoText(requestedArtist);
+  if (!artist) return false;
+  return [videoTitle, channelName].some(value => {
+    const normalized = normalizeVideoText(value);
+    return (' ' + normalized + ' ').includes(' ' + artist + ' ');
+  });
+}
+
 /** For broad searches, require meaningful overlap; never accept a filler word. */
 export function topicMatchesVideo(videoTitle: string, searchQuery: string): boolean {
   const query = searchWords(searchQuery);
@@ -49,7 +59,8 @@ export function watchVideoId(href: string, baseUrl?: string): string | null {
 export function suggestYoutubeVideo(
   snapshot: Pick<PageSnapshot, 'url' | 'actions'>,
   searchQuery: string,
-  requestedTitle?: string
+  requestedTitle?: string,
+  requestedArtist?: string
 ): PageAction | null {
   if (!isYoutubeResultPage(snapshot.url)) return null;
   const queryWords = searchWords(searchQuery);
@@ -60,7 +71,8 @@ export function suggestYoutubeVideo(
     .map((action, index) => {
       const label = normalizeVideoText(action.label);
       const eligible = requestedTitle
-        ? titleMatchesRequestedSong(action.label, requestedTitle)
+        ? titleMatchesRequestedSong(action.label, requestedTitle) &&
+          (!requestedArtist || artistMatchesRequested(action.label, action.section || '', requestedArtist))
         : topicMatchesVideo(action.label, searchQuery);
       const hits = queryWords.filter(word => (' ' + label + ' ').includes(' ' + word + ' ')).length;
       const exactBonus = requestedTitle && titleMatchesRequestedSong(action.label, requestedTitle) ? 100 : 0;

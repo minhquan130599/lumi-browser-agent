@@ -3,8 +3,8 @@ import { activeJevModel, callJevProvider } from '../shared/providers';
 import { createFieldContext, generateFieldText } from '../shared/text-helper';
 import { suggestSwaggerGetOperation } from '../shared/swagger-support';
 import { isLocalSystemOneEndpoint, toLocalSystemOneRequest } from '../shared/providers/local-systemone';
-import { isYoutubeResultPage, isYoutubeWatchPage, parseNavigationIntent, type NavigationIntent } from '../shared/navigation-intent';
-import { suggestYoutubeVideo, titleMatchesRequestedSong, watchVideoId } from '../shared/youtube-support';
+import { isYoutubeResultPage, isYoutubeWatchPage, parseNavigationIntent, parseContextualYoutubeIntent, type NavigationIntent } from '../shared/navigation-intent';
+import { suggestYoutubeVideo, titleMatchesRequestedSong, artistMatchesRequested, watchVideoId } from '../shared/youtube-support';
 import {
   ActResult,
   AgentProgress,
@@ -115,6 +115,7 @@ export class AgentRunner {
   private youtubePlayAttempted = false;
   private youtubeWaits = 0;
   private youtubeTitleWaits = 0;
+  private youtubeSearchScrolls = 0;
   /** Video ID chosen from a matching search result, used to detect redirects/autoplay changes. */
   private expectedYoutubeVideoId: string | null = null;
   private taskPlan: AgentPlan | null = null;
@@ -217,6 +218,7 @@ export class AgentRunner {
     this.youtubePlayAttempted = false;
     this.youtubeWaits = 0;
     this.youtubeTitleWaits = 0;
+    this.youtubeSearchScrolls = 0;
     this.expectedYoutubeVideoId = null;
     this.taskPlan = null;
     this.planIndex = 0;
@@ -335,13 +337,16 @@ export class AgentRunner {
         if (this.decisionAbort === controller) this.decisionAbort = null;
       }
     } catch (error) {
-      // For a local 1B model a planner may be unsupported. Jev still works.
+      // Keep the reason visible even if later actions update the verification.
+      const reason = (error instanceof Error ? error.message : String(error)).slice(0, 200);
+      this.progress.plannerFailure = reason;
       this.progress.plan = {
         steps: [this.progress.goal], activeIndex: 0,
         successCriteria: 'Observable state change', source: 'fallback'
       };
-      this.progress.verification = { ok: false, reason: 'Planner unavailable; using Jev: ' +
-        (error instanceof Error ? error.message : String(error)).slice(0, 170) };
+      this.addLog({ step: this.progress.currentStep, timestamp: Date.now(),
+        operation: 'PLAN (fallback)', targetLabel: reason,
+        provider: 'browser', latencyMs: 0 });
     }
     this.broadcastUpdate();
   }
@@ -420,11 +425,15 @@ export class AgentRunner {
    * observes the page. A model cannot invent this URL from site content.
    */
   private async applyInitialNavigation(token: number): Promise<boolean> {
-    const intent = this.navigationIntent;
     const tabId = this.activeTabId;
-    if (!intent || tabId === null) return false;
+    if (tabId === null) return false;
 
     const current = await chrome.tabs.get(tabId);
+    // The user can request a song without repeating "open YouTube" when
+    // their active tab is already YouTube.
+    this.navigationIntent ??= parseContextualYoutubeIntent(this.progress.goal, current.url || '');
+    const intent = this.navigationIntent;
+    if (!intent) return false;
     if (current.url === intent.url) return false;
     const started = Date.now();
     this.setPhase('acting');
@@ -653,7 +662,7 @@ export class AgentRunner {
     }
 
     const media = await chrome.tabs.sendMessage(tabId, { type: 'CONTENT_MEDIA_STATUS' })
-      .catch(() => null) as { found?: boolean; playing?: boolean; paused?: boolean; videoTitle?: string } | null;
+      .catch(() => null) as { found?: boolean; playing?: boolean; paused?: boolean; videoTitle?: string; videoChannel?: string } | null;
     if (token !== this.runToken) return false;
 
     if (this.expectedYoutubeVideoId && watchVideoId(snapshot.url) !== this.expectedYoutubeVideoId) {
@@ -686,12 +695,27 @@ export class AgentRunner {
         return false;
       }
       if (!titleMatchesRequestedSong(actualTitle, intent.requestedTitle)) {
-        this.finish('blocked', `The opened video is "${actualTitle}", but you requested "${intent.requestedTitle}". Refusing to report success or play the wrong song.`);
+        this.progress.verification = { ok: false, reason: 'Song title mismatch: ' + actualTitle };
+        this.finish('blocked', 'YouTube title "' + actualTitle + '" does not match requested "' + intent.requestedTitle + '".');
+        return false;
+      }
+      if (intent.requestedArtist && !artistMatchesRequested(actualTitle, media.videoChannel || '', intent.requestedArtist)) {
+        if (!media.videoChannel && ++this.youtubeTitleWaits <= 8) {
+          this.setPhase('waiting');
+          await new Promise(resolve => setTimeout(resolve, 350));
+          return token === this.runToken;
+        }
+        this.progress.verification = { ok: false, reason: 'Song artist mismatch: ' + (media.videoChannel || 'unknown') };
+        this.finish('blocked', 'YouTube artist not verified as "' + intent.requestedArtist +
+          '" (title "' + actualTitle + '", channel "' + (media.videoChannel || 'unknown') + '").');
         return false;
       }
     }
 
     if (media.playing) {
+      this.progress.verification = { ok: true,
+        reason: 'Verified YouTube title "' + (media.videoTitle || snapshot.title) + '"' +
+          (intent.requestedArtist ? ', artist "' + intent.requestedArtist + '"' : '') + ' and active playback.' };
       this.addLog({
         step: this.progress.currentStep, timestamp: Date.now(),
         operation: 'VERIFY_PLAYING',
@@ -770,7 +794,7 @@ export class AgentRunner {
   private async openYoutubeResult(tabId: number, snapshot: PageSnapshot, token: number): Promise<boolean | null> {
     const intent = this.navigationIntent;
     if (!intent?.searchQuery || !isYoutubeResultPage(snapshot.url) || this.youtubeVideoFallbackUsed) return null;
-    const action = suggestYoutubeVideo(snapshot, intent.searchQuery, intent.requestedTitle);
+    const action = suggestYoutubeVideo(snapshot, intent.searchQuery, intent.requestedTitle, intent.requestedArtist);
     if (!action) return null;
 
     this.youtubeVideoFallbackUsed = true;
@@ -860,13 +884,45 @@ export class AgentRunner {
     };
     this.broadcastUpdate();
 
-    // YouTube loads results asynchronously. Avoid giving an empty page to the
-    // small Jev model and immediately receiving a false BLOCKED decision.
+    // Never ask Jev to click unrelated search results for a media-playback goal.
     if (this.navigationIntent?.searchQuery && isYoutubeResultPage(snapshot.url)) {
-      if (!suggestYoutubeVideo(snapshot, this.navigationIntent.searchQuery, this.navigationIntent.requestedTitle) && this.youtubeWaits++ < 5) {
-        this.setPhase('waiting');
-        await new Promise(resolve => setTimeout(resolve, 400));
-        return token === this.runToken;
+      const intent = this.navigationIntent;
+      if (!intent.searchQuery) return false;
+      if (!intent.playVideo) {
+        this.progress.verification = { ok: true, reason: 'YouTube search results opened for: ' + intent.searchQuery };
+        this.finish('done');
+        return false;
+      }
+      const match = suggestYoutubeVideo(snapshot, intent.searchQuery, intent.requestedTitle, intent.requestedArtist);
+      if (!match) {
+        if (this.youtubeWaits++ < 5) {
+          this.setPhase('waiting');
+          await new Promise(resolve => setTimeout(resolve, 400));
+          return token === this.runToken;
+        }
+        this.youtubeWaits = 0;
+        const scroll = snapshot.actions.find(a => a.id === 'scroll_down');
+        if (scroll && this.youtubeSearchScrolls < 3) {
+          this.youtubeSearchScrolls++;
+          const started = Date.now();
+          this.setPhase('acting');
+          const result = await this.act(tabId, scroll).catch(() => null);
+          this.recordTime('actionMs', Date.now() - started);
+          if (token !== this.runToken) return false;
+          if (result?.ok) {
+            this.progress.currentStep++;
+            this.addLog({ step: this.progress.currentStep, timestamp: Date.now(),
+              operation: 'SCROLL (YouTube search)', targetLabel: 'Look for a matching track',
+              latencyMs: Date.now() - started, provider: 'browser' });
+            this.broadcastUpdate();
+            return true;
+          }
+        }
+        this.progress.verification = { ok: false,
+          reason: 'No observed YouTube result matched requested song/artist: ' + intent.searchQuery };
+        this.finish('blocked', 'No video matching "' + intent.searchQuery +
+          '" was found in YouTube search results. Refusing unrelated videos.');
+        return false;
       }
       this.youtubeWaits = 0;
     }
@@ -1260,7 +1316,7 @@ export class AgentRunner {
     if (operation === 'CLICK' && this.navigationIntent?.searchQuery &&
         isYoutubeResultPage(snapshot.url) && watchVideoId(targetAction.href || '', snapshot.url) &&
         !suggestYoutubeVideo({ url: snapshot.url, actions: [targetAction] },
-          this.navigationIntent.searchQuery, this.navigationIntent.requestedTitle)) {
+          this.navigationIntent.searchQuery, this.navigationIntent.requestedTitle, this.navigationIntent.requestedArtist)) {
       this.targetFailureCount.set(targetAction.id, 2);
       this.lastStaleNotice = this.navigationIntent.requestedTitle
         ? `Refused "${targetAction.label}": the full requested title "${this.navigationIntent.requestedTitle}" does not match. Find an exact title or scroll.`

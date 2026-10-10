@@ -1,5 +1,12 @@
 # Changelog
 
+## Lumi v0.2.1 — 2026-10-10
+- Fix context-aware YouTube search/play commands that omit "open YouTube"; handle the reported "bật bài lối nhỏ của đen vấu" wording.
+- Match two-word song titles and independent artist names, normalize the reported Đen Vấu misspelling, refuse unrelated channel clicks or wrong-artist music.
+- Verify actual YouTube playback; a generic DOM change cannot complete a requested song. Bound no-match retries and searches by scrolling.
+- Keep Chat AI Planner fallback errors in Side Panel diagnostics and exported traces.
+- Add regression tests and mocked-Chromium playback workflow for the specific reported failure.
+
 ## Unreleased
 - The release asset is now `jev-for-chrome-extension-<version>.zip`, made by `npm run package`. Up to 1.5.3 it was `jev-for-chrome-<version>.zip`, the name GitHub gives its own source archive, so both unzipped to the same folder and loading the source one failed with "Manifest file is missing or unreadable" ([#1](https://github.com/chy4pro/jev-for-chrome/issues/1)). The 1.5.3 asset has been renamed in place; its contents are unchanged.
 - `npm run package` refuses to build the zip when `dist/manifest.json` and `package.json` disagree on the version, or when the manifest points at a file that is not in `dist/`. `package.json` had stayed at 1.4.5 since that release; it is 1.5.3 now.

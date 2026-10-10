@@ -1,5 +1,29 @@
 import { describe, expect, it } from 'vitest';
-import { isYoutubeResultPage, isYoutubeWatchPage, parseNavigationIntent } from '../src/shared/navigation-intent';
+import { isYoutubeResultPage, isYoutubeWatchPage, parseContextualYoutubeIntent, parseNavigationIntent } from '../src/shared/navigation-intent';
+
+describe('implicit YouTube song requests on the current tab', () => {
+  const watch = 'https://www.youtube.com/watch?v=I5ah1DBc8ms&list=RDabc';
+  it('turns the reported failure into a search query with a separate artist verification', () => {
+    const plan = parseContextualYoutubeIntent('bật bài lối nhỏ của đen vấu', watch);
+    expect(plan).toMatchObject({
+      searchQuery: 'lối nhỏ Đen Vâu', requestedTitle: 'lối nhỏ',
+      requestedArtist: 'Đen Vâu', playVideo: true, navigationOnly: false,
+    });
+    expect(plan?.url).toBe('https://www.youtube.com/results?search_query=l%E1%BB%91i+nh%E1%BB%8F+%C4%90en+V%C3%A2u');
+  });
+  it('supports explicit YouTube requests with the same title and typo', () => {
+    expect(parseNavigationIntent('mở youtube bật bài lối nhỏ của đen vấu')).toMatchObject({
+      searchQuery: 'lối nhỏ Đen Vâu', requestedTitle: 'lối nhỏ',
+      requestedArtist: 'Đen Vâu'
+    });
+  });
+  it('does not mistake help, negation, or non-YouTube pages for commands', () => {
+    expect(parseContextualYoutubeIntent('hướng dẫn bật bài lối nhỏ', watch)).toBeNull();
+    expect(parseContextualYoutubeIntent('đừng bật bài lối nhỏ', watch)).toBeNull();
+    expect(parseContextualYoutubeIntent('bật bài lối nhỏ của đen vấu', 'https://github.com')).toBeNull();
+    expect(parseContextualYoutubeIntent('bật bài lối nhỏ của đen vấu', 'https://youtube.com.evil.test/watch?v=123')).toBeNull();
+  });
+});
 
 describe('explicit user navigation intent', () => {
   it('opens YouTube search results directly when user requests a song', () => {

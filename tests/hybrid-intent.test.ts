@@ -34,6 +34,13 @@ describe('P0 deterministic media tools and verification', () => {
       { videoId: 'first', found: true, playing: true },
       { videoId: 'second', found: true, playing: true }).ok).toBe(true);
   });
+  it('never counts a random channel click as correct song playback', () => {
+    const evidence = verifyGenericDone('bật bài lối nhỏ của đen vấu',
+      { url: 'https://www.youtube.com/watch?v=abc', title: 'Dunghoangpham - YouTube', text: 'Channel opened' },
+      [{ action: 'CLICK Dunghoangpham', kind: 'click', page_changed: true }]);
+    expect(evidence.verified).toBe(false);
+    expect(evidence.reason).toContain('Playback');
+  });
   it('vetoes model DONE without action evidence', () => {
     const page = { url: 'https://example.com/', title: 'Example', text: 'Ready' };
     expect(verifyGenericDone('click Submit', page, []).verified).toBe(false);

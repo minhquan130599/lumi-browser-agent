@@ -50,6 +50,7 @@ type Progress = {
   plan?: { steps: string[]; activeIndex: number; successCriteria: string; source: string };
   verification?: { ok: boolean; reason: string };
   plannerCalls?: number;
+  plannerFailure?: string;
   replans?: number;
   observation?: {
     url: string;
@@ -494,6 +495,7 @@ function App() {
                     ))}
                     <div>Điều kiện: {progress.plan.successCriteria}</div>
                     <div>Planner calls: {progress.plannerCalls || 0} · Replans: {progress.replans || 0}</div>
+                    {progress.plannerFailure && <div>Planner fallback: {progress.plannerFailure}</div>}
                   </div>
                 )}
                 {progress.verification && (
@@ -542,6 +544,7 @@ function App() {
                         plan: progress.plan,
                         verification: progress.verification,
                         plannerCalls: progress.plannerCalls,
+                        plannerFailure: progress.plannerFailure,
                         replans: progress.replans,
                         observation: progress.observation,
                         decisions: progress.logs.map(log => ({
