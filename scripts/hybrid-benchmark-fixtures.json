@@ -1,0 +1,180 @@
+{
+  "meta": {
+    "description": "Offline deterministic browser intent & result-verification regression fixtures",
+    "version": 1
+  },
+  "cases": [
+    {
+      "id": "next-vi",
+      "type": "intent",
+      "goal": "chuyển bài tiếp",
+      "url": "https://www.youtube.com/watch?v=abc",
+      "expected": "media.next"
+    },
+    {
+      "id": "next-vi-2",
+      "type": "intent",
+      "goal": "sang bài khác",
+      "url": "https://www.youtube.com/watch?v=abc",
+      "expected": "media.next"
+    },
+    {
+      "id": "next-en",
+      "type": "intent",
+      "goal": "next song",
+      "url": "https://www.youtube.com/watch?v=abc",
+      "expected": "media.next"
+    },
+    {
+      "id": "next-on-github",
+      "type": "intent",
+      "goal": "next song",
+      "url": "https://github.com/owner/repo",
+      "expected": "none"
+    },
+    {
+      "id": "how-to-not-action",
+      "type": "intent",
+      "goal": "làm sao chuyển bài tiếp",
+      "url": "https://www.youtube.com/watch?v=abc",
+      "expected": "none"
+    },
+    {
+      "id": "pause",
+      "type": "intent",
+      "goal": "tạm dừng",
+      "url": "https://www.youtube.com/watch?v=abc",
+      "expected": "media.pause"
+    },
+    {
+      "id": "resume",
+      "type": "intent",
+      "goal": "tiếp tục phát",
+      "url": "https://www.youtube.com/watch?v=abc",
+      "expected": "media.resume"
+    },
+    {
+      "id": "goto-youtube",
+      "type": "navigation",
+      "goal": "mở youtube",
+      "url": "https://www.youtube.com/watch?v=abc",
+      "expected": "www.youtube.com"
+    },
+    {
+      "id": "song-multiline",
+      "type": "navigation",
+      "goal": "mở youtube bật cho tôi bài\nNgày Còn Đôi Mươi",
+      "url": "https://www.youtube.com/watch?v=abc",
+      "expected": "www.youtube.com",
+      "query": "Ngày Còn Đôi Mươi"
+    },
+    {
+      "id": "rap-song",
+      "type": "navigation",
+      "goal": "mở youtube, bật cho tôi 1 bài rap của đen vâu",
+      "url": "https://www.youtube.com/watch?v=abc",
+      "expected": "www.youtube.com",
+      "query": "rap đen vâu"
+    },
+    {
+      "id": "open-docs",
+      "type": "navigation",
+      "goal": "mở https://example.com/docs",
+      "url": "https://www.youtube.com/watch?v=abc",
+      "expected": "example.com"
+    },
+    {
+      "id": "website-mentioned-no-command",
+      "type": "navigation",
+      "goal": "hướng dẫn cách mở youtube.com",
+      "url": "https://www.youtube.com/watch?v=abc",
+      "expected": "none"
+    },
+    {
+      "id": "next-good",
+      "type": "media_verification",
+      "before": "v1",
+      "after": "v2",
+      "playing": true,
+      "expected": true
+    },
+    {
+      "id": "next-same-id",
+      "type": "media_verification",
+      "before": "v1",
+      "after": "v1",
+      "playing": true,
+      "expected": false
+    },
+    {
+      "id": "next-not-playing",
+      "type": "media_verification",
+      "before": "v1",
+      "after": "v2",
+      "playing": false,
+      "expected": false
+    },
+    {
+      "id": "no-action-done",
+      "type": "done_verification",
+      "history": [],
+      "expected": false
+    },
+    {
+      "id": "no-change-done",
+      "type": "done_verification",
+      "history": [
+        {
+          "kind": "click",
+          "page_changed": false
+        }
+      ],
+      "expected": false
+    },
+    {
+      "id": "changed-done",
+      "type": "done_verification",
+      "history": [
+        {
+          "kind": "click",
+          "page_changed": true
+        }
+      ],
+      "expected": true
+    },
+    {
+      "id": "api-no-response",
+      "type": "done_verification",
+      "goal": "test api voice",
+      "text": "Swagger GET /v1/voices",
+      "history": [
+        {
+          "kind": "click",
+          "page_changed": true
+        }
+      ],
+      "expected": false
+    },
+    {
+      "id": "song-title-exact",
+      "type": "title",
+      "requested": "Ngày Còn Đôi Mươi",
+      "actual": "NGÀY CÒN ĐÔI MƯƠI - Official",
+      "expected": true
+    },
+    {
+      "id": "song-title-wrong",
+      "type": "title",
+      "requested": "Ngày Còn Đôi Mươi",
+      "actual": "Bài Ca Mùa Hạ Remix",
+      "expected": false
+    },
+    {
+      "id": "song-title-partial",
+      "type": "title",
+      "requested": "Ngày Còn Đôi Mươi",
+      "actual": "Ngày Còn",
+      "expected": false
+    }
+  ]
+}

@@ -75,6 +75,16 @@ export class TrustedInput {
     await this.send('Input.insertText', { text });
   }
 
+  /** Trusted YouTube keyboard shortcut: Shift+N/P for next/previous in a playlist. */
+  public async youtubeShortcut(direction: 'next' | 'previous'): Promise<void> {
+    const code = direction === 'next' ? 'KeyN' : 'KeyP';
+    const key = direction === 'next' ? 'N' : 'P';
+    const vk = direction === 'next' ? 78 : 80;
+    const params = { key, code, windowsVirtualKeyCode: vk, nativeVirtualKeyCode: vk, modifiers: 8 };
+    await this.send('Input.dispatchKeyEvent', { type: 'keyDown', ...params });
+    await this.send('Input.dispatchKeyEvent', { type: 'keyUp', ...params });
+  }
+
   /** A real Enter keystroke in the focused element: submits forms, picks suggestions. */
   public async pressEnter(): Promise<void> {
     const key = { key: 'Enter', code: 'Enter', windowsVirtualKeyCode: 13, nativeVirtualKeyCode: 13 };

@@ -1,0 +1,41 @@
+[
+  {
+    "status": "done",
+    "step": 1,
+    "timing": {
+      "totalMs": 725,
+      "decisionMs": 0,
+      "decisionCalls": 0
+    },
+    "verification": {
+      "ok": true
+    },
+    "replans": 0
+  },
+  {
+    "status": "blocked",
+    "step": 0,
+    "timing": {
+      "totalMs": 3200,
+      "decisionMs": 2870,
+      "decisionCalls": 2
+    },
+    "verification": {
+      "ok": false
+    },
+    "replans": 1
+  },
+  {
+    "status": "done",
+    "step": 3,
+    "timing": {
+      "totalMs": 2550,
+      "decisionMs": 1200,
+      "decisionCalls": 2
+    },
+    "verification": {
+      "ok": true
+    },
+    "replans": 0
+  }
+]

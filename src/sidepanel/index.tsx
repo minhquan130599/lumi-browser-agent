@@ -47,6 +47,10 @@ type Progress = {
     lastObserveMs?: number;
     lastRequestBytes?: number;
   };
+  plan?: { steps: string[]; activeIndex: number; successCriteria: string; source: string };
+  verification?: { ok: boolean; reason: string };
+  plannerCalls?: number;
+  replans?: number;
   observation?: {
     url: string;
     title: string;
@@ -122,10 +126,29 @@ function App() {
     chrome.storage.onChanged.addListener(onStorageChanged);
 
     const onMessage = (
-      message: { type: string; progress?: Progress; context?: FieldContext },
+      message: { type: string; progress?: Progress; context?: FieldContext; prompt?: string },
       sender: chrome.runtime.MessageSender,
       sendResponse: (answer: unknown) => void
     ) => {
+      if (message.type === 'LUMI_AGENT_PLAN') {
+        if (sender.id !== chrome.runtime.id || sender.tab ||
+            typeof message.prompt !== 'string' || message.prompt.length > 4500) {
+          sendResponse({ success: false, error: 'Invalid planner request.' });
+          return false;
+        }
+        void (async () => {
+          try {
+            const text = await askAI(
+              { ...DEFAULT_AI },
+              [{ role: 'user', content: message.prompt! }]
+            );
+            sendResponse({ success: true, text });
+          } catch (error) {
+            sendResponse({ success: false, error: error instanceof Error ? error.message : String(error) });
+          }
+        })();
+        return true;
+      }
       if (message.type === 'LUMI_CHROME_TEXT_HELPER') {
         // Never accept requests from injected page/content-script contexts.
         if (sender.id !== chrome.runtime.id || sender.tab || !message.context) {
@@ -460,6 +483,25 @@ function App() {
                     )}
                   </div>
                 )}
+                {progress.plan && (
+                  <div className="agent-timing">
+                    <b>Hybrid Agent Plan</b>
+                    <div>Nguồn: {progress.plan.source} · Bước {progress.plan.activeIndex + 1}/{progress.plan.steps.length}</div>
+                    {progress.plan.steps.map((step, i) => (
+                      <div key={i} style={{ opacity: i === progress.plan!.activeIndex ? 1 : .55 }}>
+                        {i + 1}. {step}
+                      </div>
+                    ))}
+                    <div>Điều kiện: {progress.plan.successCriteria}</div>
+                    <div>Planner calls: {progress.plannerCalls || 0} · Replans: {progress.replans || 0}</div>
+                  </div>
+                )}
+                {progress.verification && (
+                  <div className="agent-timing">
+                    <b>Kết quả kiểm tra: {progress.verification.ok ? 'Đã xác minh' : 'Chưa xác minh'}</b>
+                    <div>{progress.verification.reason}</div>
+                  </div>
+                )}
                 {progress.lastError && <p className="agent-reason">{progress.lastError}</p>}
                 {progress.observation && (
                   <details className="agent-details" open={progress.status === 'blocked'}>
@@ -497,6 +539,10 @@ function App() {
                         maxSteps: progress.maxSteps,
                         reason: progress.lastError,
                         timing: progress.timing,
+                        plan: progress.plan,
+                        verification: progress.verification,
+                        plannerCalls: progress.plannerCalls,
+                        replans: progress.replans,
                         observation: progress.observation,
                         decisions: progress.logs.map(log => ({
                           operation: log.operation,

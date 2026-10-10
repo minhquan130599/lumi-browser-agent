@@ -19,6 +19,14 @@ import {
   RecentAction,
 } from '../shared/types';
 import { TrustedInput } from './input';
+import { routeDirectIntent } from '../shared/intent-router';
+import { runYoutubeMediaSkill } from './media-skill';
+import { verifyGenericDone } from '../shared/completion-verifier';
+import { planWithChatAI, type AgentPlan } from '../shared/planner';
+import { readTaskMemory, rememberTask, type TaskMemory } from '../shared/task-memory';
+import { suggestVisionAction } from '../shared/vision';
+import { checkObservedTarget } from '../shared/direct-tools';
+
 
 /** Semantic fingerprint of an observation: URL, scroll, visible text and the element table. */
 export function computePageFingerprint(snapshot: PageSnapshot): string {
@@ -109,6 +117,14 @@ export class AgentRunner {
   private youtubeTitleWaits = 0;
   /** Video ID chosen from a matching search result, used to detect redirects/autoplay changes. */
   private expectedYoutubeVideoId: string | null = null;
+  private taskPlan: AgentPlan | null = null;
+  private planIndex = 0;
+  private subgoalHistoryStart = 0;
+  private taskMemory: TaskMemory | null = null;
+  private visionAttempted = false;
+  private unverifiedDoneCount = 0;
+  private replanCount = 0;
+
 
   private lastFingerprint: string | null = null;
   private lastSummary: PageSummary | null = null;
@@ -202,6 +218,13 @@ export class AgentRunner {
     this.youtubeWaits = 0;
     this.youtubeTitleWaits = 0;
     this.expectedYoutubeVideoId = null;
+    this.taskPlan = null;
+    this.planIndex = 0;
+    this.subgoalHistoryStart = 0;
+    this.taskMemory = null;
+    this.visionAttempted = false;
+    this.unverifiedDoneCount = 0;
+    this.replanCount = 0;
     this.history = [];
     this.lastFingerprint = null;
     this.lastSummary = null;
@@ -232,6 +255,164 @@ export class AgentRunner {
       maxSteps: this.settings.maxSteps || DEFAULT_SETTINGS.maxSteps,
       logs: [],
     };
+  }
+
+  /** Fast-path for media transport: act ONCE and verify a changed video ID. */
+  private async tryDirectMedia(token: number): Promise<boolean> {
+    const tabId = this.activeTabId;
+    if (tabId === null) return false;
+    const tab = await chrome.tabs.get(tabId);
+    const intent = routeDirectIntent(this.progress.goal, tab.url || '');
+    if (!intent) return false;
+    this.setPhase('acting');
+    const started = Date.now();
+    try {
+      await this.ensureContentScriptReady(tabId);
+      if (token !== this.runToken) return true;
+      const result = await runYoutubeMediaSkill(
+        tabId, intent, this.input, this.settings.trustedInput,
+        () => token !== this.runToken || this.progress.status !== 'running'
+      );
+      if (token !== this.runToken) return true;
+      this.recordTime('actionMs', Date.now() - started);
+      this.progress.verification = { ok: result.ok, reason: result.reason };
+      if (result.ok) {
+        this.progress.currentStep++;
+        this.addLog({
+          step: this.progress.currentStep, timestamp: Date.now(),
+          operation: 'MEDIA_' + intent.command.toUpperCase(),
+          targetLabel: result.beforeId + ' -> ' + result.afterId,
+          latencyMs: result.elapsedMs, provider: 'browser'
+        });
+        this.finish('done');
+      } else {
+        this.finish('blocked', result.reason);
+      }
+    } catch (error: any) {
+      if (token === this.runToken) this.finish('error', 'Media control: ' + (error?.message || String(error)));
+    }
+    return true;
+  }
+
+  /** Planner is best-effort: unsupported Chrome AI never prevents Jev fallback. */
+  private async prepareTaskPlan(token: number): Promise<void> {
+    const tabId = this.activeTabId;
+    if (!this.settings.plannerEnabled || this.navigationIntent || tabId === null ||
+        !chrome.storage?.local) return;
+    this.taskMemory = await readTaskMemory(tabId);
+    const tab = await chrome.tabs.get(tabId);
+    if (!tab.url?.startsWith('http')) return;
+    try {
+      await this.ensureContentScriptReady(tabId);
+      const observed = await chrome.tabs.sendMessage(tabId, { type: 'CONTENT_OBSERVE' });
+      if (!observed?.success || !observed.snapshot) return;
+      const shot = observed.snapshot as PageSnapshot;
+      const controller = new AbortController();
+      this.decisionAbort = controller;
+      this.setPhase('deciding');
+      if (this.progress.plannerCalls === undefined) this.progress.plannerCalls = 0;
+      this.progress.plannerCalls++;
+      const start = Date.now();
+      try {
+        const plan = await planWithChatAI(this.progress.goal, {
+          url: shot.url, title: shot.title, text: shot.text,
+          controls: shot.actions.map(a => a.label),
+        }, this.taskMemory, controller.signal);
+        if (token !== this.runToken) return;
+        this.taskPlan = plan;
+        this.planIndex = 0;
+        this.subgoalHistoryStart = 0;
+        this.progress.plan = {
+          steps: plan.subgoals, activeIndex: 0, successCriteria: plan.successCriteria,
+          source: 'chat_ai'
+        };
+        this.addLog({
+          step: this.progress.currentStep, timestamp: Date.now(),
+          operation: 'PLAN', targetLabel: plan.subgoals.join(' -> ').slice(0, 180),
+          provider: 'browser', latencyMs: Date.now() - start
+        });
+      } finally {
+        if (this.decisionAbort === controller) this.decisionAbort = null;
+      }
+    } catch (error) {
+      // For a local 1B model a planner may be unsupported. Jev still works.
+      this.progress.plan = {
+        steps: [this.progress.goal], activeIndex: 0,
+        successCriteria: 'Observable state change', source: 'fallback'
+      };
+      this.progress.verification = { ok: false, reason: 'Planner unavailable; using Jev: ' +
+        (error instanceof Error ? error.message : String(error)).slice(0, 170) };
+    }
+    this.broadcastUpdate();
+  }
+
+  private async tryReplan(snapshot: PageSnapshot, token: number): Promise<boolean> {
+    if (!this.taskPlan || this.replanCount >= 1 || !this.settings.plannerEnabled ||
+        !chrome.storage?.local) return false;
+    this.replanCount++;
+    this.progress.replans = this.replanCount;
+    try {
+      const controller = new AbortController();
+      this.decisionAbort = controller;
+      const plan = await planWithChatAI(this.progress.goal + ' (previous attempt was blocked; find another safe approach)',
+        { url: snapshot.url, title: snapshot.title, text: snapshot.text,
+          controls: snapshot.actions.map(a => a.label) }, this.taskMemory, controller.signal);
+      if (this.decisionAbort === controller) this.decisionAbort = null;
+      if (token !== this.runToken) return false;
+      this.taskPlan = plan;
+      this.planIndex = 0;
+      this.subgoalHistoryStart = this.history.length;
+      this.progress.plan = {
+        steps: plan.subgoals, activeIndex: 0, successCriteria: plan.successCriteria,
+        source: 'chat_ai'
+      };
+      this.vetoed = null;
+      this.pendingTerminal = null;
+      this.initialBlockReviewed = false;
+      this.lastStaleNotice = 'A new plan was prepared after BLOCKED. Try the next safe subgoal.';
+      this.broadcastUpdate();
+      return true;
+    } catch {
+      this.decisionAbort = null;
+      return false;
+    }
+  }
+
+  /** Opt-in vision can suggest ONLY an already observed safe DOM control. */
+  private async tryVision(snapshot: PageSnapshot, tabId: number, token: number): Promise<boolean> {
+    if (!this.settings.visionFallback || this.visionAttempted || !chrome.storage?.local) return false;
+    this.visionAttempted = true;
+    const controller = new AbortController();
+    this.decisionAbort = controller;
+    try {
+      this.setPhase('deciding');
+      const hint = await suggestVisionAction(tabId, this.progress.goal, snapshot, controller.signal);
+      if (!hint || token !== this.runToken) return false;
+      const policy = checkObservedTarget(hint.action, this.progress.goal);
+      if (!policy.allowed) return false;
+      this.setPhase('acting');
+      const result = await this.act(tabId, hint.action);
+      if (!result.ok || token !== this.runToken) return false;
+      this.history.push({
+        step: this.progress.currentStep + 1,
+        action: 'CLICK ' + hint.action.label,
+        kind: 'click', page_changed: undefined
+      });
+      this.progress.currentStep++;
+      this.lastTargetActionId = hint.action.id;
+      this.addLog({
+        step: this.progress.currentStep, timestamp: Date.now(),
+        operation: 'VISION (verified DOM target)', targetId: hint.action.id,
+        targetLabel: hint.action.label, confidence: hint.confidence,
+        provider: 'browser', latencyMs: 0
+      });
+      this.broadcastUpdate();
+      return true;
+    } catch {
+      return false;
+    } finally {
+      if (this.decisionAbort === controller) this.decisionAbort = null;
+    }
   }
 
   /**
@@ -285,12 +466,15 @@ export class AgentRunner {
     this.broadcastUpdate();
     const startup = Date.now();
     try {
+      if (await this.tryDirectMedia(token)) return;
       await this.applyInitialNavigation(token);
       if (token !== this.runToken) return;
       if (this.navigationIntent?.navigationOnly) {
         this.finish('done');
         return;
       }
+      await this.prepareTaskPlan(token);
+      if (token !== this.runToken) return;
       await this.attachInput(tabId);
       this.recordTime('startupMs', Date.now() - startup);
       await this.loop(token);
@@ -322,6 +506,7 @@ export class AgentRunner {
     const startup = Date.now();
     try {
       if (!continuing) {
+        if (await this.tryDirectMedia(token)) return;
         const navigated = await this.applyInitialNavigation(token);
         if (token !== this.runToken) return;
         if (this.navigationIntent?.navigationOnly) {
@@ -336,6 +521,8 @@ export class AgentRunner {
           return;
         }
       }
+      if (!continuing) await this.prepareTaskPlan(token);
+      if (token !== this.runToken) return;
       await this.attachInput(tabId);
       this.recordTime('startupMs', Date.now() - startup);
       const cont = await this.executeOneStep(token);
@@ -771,7 +958,7 @@ export class AgentRunner {
     const { request, actionSpace } = buildJevRequest(
       activeJevModel(this.settings),
       snapshot,
-      this.navigationIntent?.modelGoal || this.progress.goal,
+      this.navigationIntent?.modelGoal || this.taskPlan?.subgoals[this.planIndex] || this.progress.goal,
       this.history,
       { warning, suppressedTargetIds },
       { start_url: this.startUrl, steps_taken: this.history.length, visited_urls: this.visitedUrls.slice(-6) }
@@ -832,6 +1019,44 @@ export class AgentRunner {
       this.lastStaleNotice = 'The user requested a video; search results alone are not DONE. Open a /watch?v= video.';
       this.broadcastUpdate();
       return true;
+    }
+
+    if (operation === 'DONE') {
+      const goal = this.taskPlan?.subgoals[this.planIndex] || this.progress.goal;
+      const checked = verifyGenericDone(goal, snapshot, this.history.slice(this.subgoalHistoryStart));
+      this.progress.verification = { ok: checked.verified, reason: checked.reason };
+      if (!checked.verified) {
+        this.unverifiedDoneCount++;
+        this.addLog({
+          step: this.progress.currentStep, timestamp: Date.now(),
+          operation: 'DONE (unverified)', targetLabel: checked.reason,
+          confidence: operationAnswer.confidence, provider,
+          latencyMs, goalDone, stuck
+        });
+        if (this.unverifiedDoneCount >= 2) {
+          this.finish('blocked', 'Refused an unverified DONE: ' + checked.reason);
+          return false;
+        }
+        this.vetoed = 'DONE';
+        this.lastStaleNotice = 'Do not finish yet. Verification failed: ' + checked.reason;
+        this.broadcastUpdate();
+        return true;
+      }
+      if (this.taskPlan && this.planIndex + 1 < this.taskPlan.subgoals.length) {
+        this.planIndex++;
+        this.subgoalHistoryStart = this.history.length;
+        this.unverifiedDoneCount = 0;
+        this.initialBlockReviewed = false;
+        this.pendingTerminal = null;
+        if (this.progress.plan) this.progress.plan.activeIndex = this.planIndex;
+        this.addLog({
+          step: this.progress.currentStep, timestamp: Date.now(),
+          operation: 'SUBGOAL_VERIFIED', targetLabel: checked.reason,
+          latencyMs: 0, provider: 'browser'
+        });
+        this.broadcastUpdate();
+        return true;
+      }
     }
 
     if (operation === 'DONE' && goalDone !== undefined && goalDone < GOAL_DONE_MIN) {
@@ -951,6 +1176,11 @@ export class AgentRunner {
       return true;
     }
 
+    if (operation === 'BLOCKED' && (this.initialBlockReviewed || this.history.length > 0)) {
+      if (await this.tryVision(snapshot, tabId, token)) return true;
+      if (await this.tryReplan(snapshot, token)) return true;
+    }
+
     if (operation === 'DONE' || operation === 'BLOCKED') {
       if (operationAnswer.confidence < TERMINAL_CONFIRM_THRESHOLD && this.pendingTerminal !== operation && !(operation === 'BLOCKED' && this.initialBlockReviewed)) {
         // A hesitant verdict gets one more look after the page settles; only a repeat ends the run.
@@ -1055,6 +1285,12 @@ export class AgentRunner {
       this.lastStaleNotice = 'Search query is already in YouTube results. Do not type it again; scroll to a video or click a /watch link.';
       this.broadcastUpdate();
       return true;
+    }
+
+    const policy = checkObservedTarget(targetAction, this.progress.goal);
+    if (!policy.allowed) {
+      this.finish('blocked', policy.reason + ' Target: ' + targetAction.label);
+      return false;
     }
 
     // 6. TYPE_TEXT: the helper supplies the value; reuse it only for an identical input after a stale retry
@@ -1258,6 +1494,17 @@ export class AgentRunner {
     this.decisionAbort = null;
     if (this.progress.timing) this.progress.timing.currentPhase = 'finished';
     this.progress.status = status;
+    if (this.activeTabId !== null) {
+      const tabId = this.activeTabId;
+      const taskGoal = this.progress.goal;
+      const lastOperation = this.progress.logs[0]?.operation || 'none';
+      const endedAt = Date.now();
+      void chrome.tabs.get(tabId).then(tab => rememberTask({
+        tabId, host: new URL(tab.url || 'https://unknown.invalid').hostname,
+        goal: taskGoal, outcome: status,
+        lastOperation, updatedAt: endedAt,
+      })).catch(() => undefined);
+    }
     if (message) {
       this.progress.lastError = message;
     } else {

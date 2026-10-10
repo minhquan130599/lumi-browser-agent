@@ -93,10 +93,14 @@ try {
           body: '<!doctype html><html><head><title>' + songName + ' - YouTube</title></head><body>' +
             '<main><h1>' + songName + '</h1>' +
             '<button id="subscribe">Subscribe</button><button id="share">Share</button>' +
-            '<video id="player" style="width:400px;height:220px" onclick="this.play()"></video>' +
+            '<button class="ytp-next-button" style="width:100px;height:45px"' +
+            ' onclick="location.assign(&#39;/watch?v=following123&#39;)">Next track</button>' +
+            '<video id="player" autoplay muted style="width:400px;height:220px" onclick="this.play()"></video>' +
             '<script>const c=document.createElement("canvas");c.width=160;c.height=90;' +
             'const ctx=c.getContext("2d");let n=0;setInterval(()=>{ctx.fillStyle=n++%2?"red":"blue";ctx.fillRect(0,0,160,90)},100);' +
-            'const v=document.querySelector("video");v.srcObject=c.captureStream(10);</script></main></body></html>',
+            'const v=document.querySelector("video");v.srcObject=c.captureStream(10);' +
+            (videoId === 'following123' ? 'v.play().catch(()=>{});' : '') +
+            '</script></main></body></html>',
         });
       } else {
         await route.fulfill({ status: 404, contentType: 'text/html', body: '<h1>Not found</h1>' });
@@ -185,7 +189,7 @@ try {
     };
     console.log(JSON.stringify({ naturalLanguageRapTest: rapResult }));
     if (rapResult.status !== 'done' ||
-        rapResult.step < 3 ||
+        rapResult.step < 2 ||
         !rapResult.url.startsWith('https://www.youtube.com/watch?v=denvau123') ||
         !rapResult.playing ||
         !rapResult.operations.includes('SEARCH (navigate)') ||
@@ -222,6 +226,33 @@ try {
         !exactResult.selected?.includes('NGÀY CÒN ĐÔI MƯƠI') ||
         !exactResult.verified?.includes('NGÀY CÒN ĐÔI MƯƠI')) {
       throw new Error('Multiline song task opened or verified the wrong track.');
+    }
+
+    // P0 media transport regression: no Jev model calls are needed; success
+    // requires a CHANGED YouTube video ID and the new video actually playing.
+    const mediaRun = await extension.evaluate(async target =>
+      chrome.runtime.sendMessage({ type: 'START_AGENT', tabId: target, goal: 'chuyển bài tiếp' }), tabId);
+    if (!mediaRun?.success) throw new Error('P0 Next command not accepted.');
+    let mediaProgress: any;
+    for (let i = 0; i < 120; i++) {
+      await new Promise(resolve => setTimeout(resolve, 100));
+      mediaProgress = await extension.evaluate(async () =>
+        (await chrome.runtime.sendMessage({ type: 'GET_PROGRESS' }))?.progress);
+      if (mediaProgress && !['running', 'paused'].includes(mediaProgress.status)) break;
+    }
+    const mediaResult = {
+      status: mediaProgress?.status,
+      step: mediaProgress?.currentStep,
+      url: page.url(),
+      playing: await page.evaluate(() => !document.querySelector('video')?.paused),
+      verification: mediaProgress?.verification,
+      jevDecisionCalls: mediaProgress?.timing?.decisionCalls,
+    };
+    console.log(JSON.stringify({ mediaNextP0Test: mediaResult }));
+    if (mediaResult.status !== 'done' || mediaResult.step !== 1 ||
+        !mediaResult.url.includes('v=following123') || !mediaResult.playing ||
+        mediaResult.jevDecisionCalls !== 0 || mediaResult.verification?.ok !== true) {
+      throw new Error('P0 media next must verify video ID change and playback without Jev.');
     }
 
     // Badge overlay regression: render numbered controls, disable overlay via

@@ -4,6 +4,12 @@ Lumi Browser AI is a Chrome Manifest V3 extension with a dark companion-style **
 
 > **Prototype / early development.** TypeScript/unit tests and Vite build run successfully. A Chromium end-to-end smoke test covers navigation → YouTube search → one video click → actual HTML video playback, using **mocked YouTube pages and a mock Jev server**. Live YouTube, provider accuracy and other real websites still require validation. Remote mobile chat has **not** been implemented yet.
 
+## Lumi Hybrid Agent v0.2.0 (P0–P3)
+
+The extension now supports result verification before DONE, YouTube next/previous/playback controls, an optional shared-Chat-AI Intent Planner with multi-step Jev micro-goals and session memory, conservative direct browser tools, opt-in screenshot vision, and reproducible regression benchmarks.
+
+For architecture, permissions, testing commands and known limitations, see [Hybrid Agent P0–P3 implementation](docs/HYBRID_AGENT.md). Vision is **OFF** by default and requires explicit permission because active-tab screenshots may contain sensitive information. Generic DOM-change verification is not a guarantee that every semantic task is complete.
+
 ## Features
 
 - Page Q&A (summarize or ask questions about the current HTTP/HTTPS tab).

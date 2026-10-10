@@ -1,3 +1,4 @@
+import { mediaControlTarget, clickMediaControl } from './media-controls';
 import { ActResult, ExtensionMessage } from '../shared/types';
 import { dispatchSynthetic, executeAction, prepareAction, settle } from './executor';
 import {
@@ -78,6 +79,26 @@ function boot(): void {
             readyState: video?.readyState ?? 0,
             videoTitle,
           });
+          return false;
+        }
+
+        case 'CONTENT_MEDIA_CONTROL_TARGET': {
+          sendResponse(mediaControlTarget(message.command));
+          return false;
+        }
+
+        case 'CONTENT_MEDIA_CONTROL_CLICK': {
+          sendResponse(clickMediaControl(message.command));
+          return false;
+        }
+
+        case 'CONTENT_MEDIA_PAUSE': {
+          const video = document.querySelector('video');
+          if (!video) sendResponse({ success: false, error: 'No active video element.' });
+          else {
+            video.pause();
+            sendResponse({ success: video.paused });
+          }
           return false;
         }
 

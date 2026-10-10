@@ -343,7 +343,7 @@ export const Options: React.FC = () => {
                 onChange={(e) =>
                   setSettings({
                     ...settings,
-                    stepDelayMs: parseInt(e.target.value, 10) || 300,
+                    stepDelayMs: Number.isFinite(Number(e.target.value)) ? Math.max(0, Math.min(5000, Number(e.target.value))) : 75,
                   })
                 }
               />
@@ -360,6 +360,26 @@ export const Options: React.FC = () => {
                 }
               />
               Show [1], [2] element badges overlay on webpage during execution
+            </label>
+          </div>
+
+          <div style={styles.checkboxField}>
+            <label style={styles.checkboxLabel}>
+              <input type="checkbox" checked={settings.plannerEnabled}
+                onChange={(e) => setSettings({ ...settings, plannerEnabled: e.target.checked })} />
+              Hybrid LLM Intent Planner (recommended): break complex tasks into micro-goals,
+              reuse Chat AI provider and keep session-scoped task context. Sends a short page excerpt
+              and visible control labels to that provider, which may be cloud-hosted. Falls back to Jev when unavailable.
+            </label>
+          </div>
+
+          <div style={styles.checkboxField}>
+            <label style={styles.checkboxLabel}>
+              <input type="checkbox" checked={settings.visionFallback}
+                onChange={(e) => setSettings({ ...settings, visionFallback: e.target.checked })} />
+              Vision fallback (OFF by default): allow sending a screenshot of the ACTIVE browser tab
+              to the configured Chat AI provider after Jev is blocked. The screenshot may
+              include personal information. Only observed DOM targets may be clicked.
             </label>
           </div>
 

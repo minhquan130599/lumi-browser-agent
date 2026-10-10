@@ -60,6 +60,10 @@ export interface AppSettings {
    * script's synthetic events are used instead.
    */
   trustedInput: boolean;
+  /** Optional LLM micro-goal planner, with deterministic fallback if unavailable. */
+  plannerEnabled: boolean;
+  /** Explicit consent: screenshot may be sent to selected Chat AI model. Default OFF. */
+  visionFallback: boolean;
 }
 
 export const DEFAULT_SETTINGS: AppSettings = {
@@ -90,6 +94,8 @@ export const DEFAULT_SETTINGS: AppSettings = {
   stepDelayMs: 75,
   showOverlay: false,
   trustedInput: true,
+  plannerEnabled: true,
+  visionFallback: false,
 };
 
 /**
@@ -336,6 +342,10 @@ export interface AgentProgress {
   };
   /** How input reaches the page this run, when it is not the trusted path. */
   inputNote?: string;
+  plan?: { steps: string[]; activeIndex: number; successCriteria: string; source: "chat_ai" | "fallback" };
+  verification?: { ok: boolean; reason: string };
+  plannerCalls?: number;
+  replans?: number;
 }
 
 // Messages between Extension components
@@ -362,6 +372,11 @@ export type ExtensionMessage =
   | { type: 'CONTENT_MEDIA_STATUS' }
   | { type: 'CONTENT_MEDIA_PLAY' }
   | { type: 'CONTENT_MEDIA_RECT' }
+  | { type: 'CONTENT_MEDIA_CONTROL_TARGET'; command: 'next' | 'previous' | 'pause' | 'resume' }
+  | { type: 'CONTENT_MEDIA_CONTROL_CLICK'; command: 'next' | 'previous' | 'pause' | 'resume' }
+  | { type: 'CONTENT_MEDIA_PAUSE' }
+  /** Side Panel accepts planner calls when Chrome Built-in AI is selected. */
+  | { type: 'LUMI_AGENT_PLAN'; prompt: string }
   /** Whole action inside the page with synthetic events (fallback when trusted input is off). */
   | { type: 'CONTENT_ACT'; action: PageAction; text?: string }
   /** Checks, scrolls and focuses the target; returns the point for the background's trusted input. */

@@ -273,15 +273,15 @@ describe('AgentRunner', () => {
     expect(jev).not.toHaveBeenCalled();
   });
 
-  it('finishes with DONE without executing anything', async () => {
-    jev.mockResolvedValueOnce(answer('DONE'));
+  it('refuses DONE without executing anything', async () => {
+    jev.mockResolvedValueOnce(answer('DONE')).mockResolvedValue(answer('BLOCKED'));
     const r = runner();
     await r.start('Do nothing', 7);
 
     const progress = r.getProgress();
-    expect(progress.status).toBe('done');
+    expect(progress.status).toBe('blocked');
     expect(progress.currentStep).toBe(0);
-    expect(progress.logs[0].operation).toBe('DONE');
+    expect(progress.logs.some(l => l.operation === 'DONE (unverified)')).toBe(true);
     expect(page.sent.filter((m) => m.type === 'CONTENT_ACT')).toHaveLength(0);
     expect(page.sent).toContainEqual({ type: 'CONTENT_STATUS', clear: true });
   });
@@ -346,7 +346,7 @@ describe('AgentRunner', () => {
     };
     jev.mockResolvedValueOnce(uncertainBlocked)
       .mockResolvedValueOnce(uncertainBlocked)
-      .mockResolvedValueOnce(answer('DONE'));
+      .mockResolvedValueOnce(answer('DONE')).mockResolvedValue(answer('BLOCKED'));
 
     page.act = (action) => {
       expect(action.label).toBe('GET /v1 /voices Voices');
@@ -363,13 +363,14 @@ describe('AgentRunner', () => {
 
     const r = runner();
     await r.start('test api lấy danh sách voice', 7);
-    expect(r.getProgress().status, r.getProgress().lastError).toBe('done');
+    expect(r.getProgress().status).toBe('blocked');
     expect(r.getProgress().currentStep).toBe(1);
-    expect(jev).toHaveBeenCalledTimes(3);
+    expect(jev.mock.calls.length).toBeGreaterThanOrEqual(4);
     expect(jev.mock.calls[1][1].questions.operation.instructions).toMatchObject({
       ineffective_action_alert: expect.stringContaining('GET /v1 /voices'),
     });
     expect(page.sent.filter(message => message.type === 'CONTENT_ACT')).toHaveLength(1);
+    expect(r.getProgress().verification?.ok).toBe(false);
     expect(r.getProgress().logs.some(log => log.operation === 'CLICK (safe Swagger fallback)')).toBe(true);
   });
 
@@ -464,7 +465,8 @@ describe('AgentRunner', () => {
 
   it('recovers when the model answers consistently on the second try', async () => {
     const invalid = { model: 'm', answers: { operation: { choice: 'CLICK', probabilities: { CLICK: 0.2, DONE: 0.8 } } } };
-    jev.mockResolvedValueOnce(invalid).mockResolvedValueOnce(answer('DONE'));
+    jev.mockResolvedValueOnce(invalid).mockResolvedValueOnce(answer('CLICK', clickTarget('1'))).mockResolvedValueOnce(answer('DONE'));
+    page.act = () => { page.snapshot = snapshot({ text: 'Results loaded', url: 'https://example.com/results' }); return { ok: true, via: 'synthetic' }; };
     const r = runner();
     await r.start('Search', 7);
     expect(r.getProgress().status).toBe('done');
@@ -575,12 +577,12 @@ describe('text helper refusal', () => {
     const page: Page = { snapshot: snapshot(), act: () => ({ ok: true, via: 'synthetic' }), sent: [] };
     installChrome(page);
     const typeText = { type_text_target: { choice: '2', confidence: 0.8, probabilities: { '2': 1 } } };
-    jev.mockResolvedValueOnce(answer('TYPE_TEXT', typeText)).mockResolvedValueOnce(answer('DONE'));
+    jev.mockResolvedValueOnce(answer('TYPE_TEXT', typeText)).mockResolvedValueOnce(answer('DONE')).mockResolvedValue(answer('BLOCKED'));
     textHelper.mockRejectedValueOnce(new Error('Text helper found no value for this field in the goal; nothing typed.'));
     const r = runner();
     await r.start('Reach the Eiffel Tower article using only links', 7);
 
-    expect(r.getProgress().status).toBe('done');
+    expect(r.getProgress().status).toBe('blocked');
     expect(page.sent.filter((m) => m.type === 'CONTENT_ACT')).toHaveLength(0);
     expect((jev.mock.calls[1][1].questions.operation.instructions as any).ineffective_action_alert).toMatch(/No value for the field/);
   });
@@ -610,7 +612,10 @@ describe('hesitant verdicts', () => {
   });
 
   it('takes a second look before accepting a low-confidence BLOCKED, and continues if the model changes its mind', async () => {
-    const page: Page = { snapshot: snapshot(), act: () => ({ ok: true, via: 'synthetic' }), sent: [] };
+    const page: Page = { snapshot: snapshot(), act: () => {
+      page.snapshot = snapshot({ url: 'https://example.com/results', text: 'Results loaded' });
+      return { ok: true, via: 'synthetic' };
+    }, sent: [] };
     installChrome(page);
     jev.mockResolvedValueOnce(hesitant('BLOCKED')).mockResolvedValueOnce(answer('CLICK', clickTarget('1'))).mockResolvedValueOnce(answer('DONE'));
     const r = runner();
@@ -691,7 +696,10 @@ describe('cross-checks and outcomes', () => {
   });
 
   it('vetoes DONE when the goal check disagrees, withholds DONE once, and tells the model why', async () => {
-    const page: Page = { snapshot: snapshot(), act: () => ({ ok: true, via: 'synthetic' }), sent: [] };
+    const page: Page = { snapshot: snapshot(), act: () => {
+      page.snapshot = snapshot({ url: 'https://example.com/results', text: 'Results loaded' });
+      return { ok: true, via: 'synthetic' };
+    }, sent: [] };
     installChrome(page);
     jev
       .mockResolvedValueOnce(withChecks(answer('DONE'), 0.1, 0.05))
@@ -702,10 +710,10 @@ describe('cross-checks and outcomes', () => {
 
     const second = jev.mock.calls[1][1];
     expect(Object.keys((second.questions.operation as ChoiceQuestion).criteria)).not.toContain('DONE');
-    expect((second.questions.operation.instructions as any).ineffective_action_alert).toMatch(/not achieved yet \(probability 0.10\)/);
+    expect((second.questions.operation.instructions as any).ineffective_action_alert).toMatch(/No browser action has been executed/);
     expect(Object.keys((jev.mock.calls[2][1].questions.operation as ChoiceQuestion).criteria)).toContain('DONE');
     expect(r.getProgress().status).toBe('done');
-    expect(r.getProgress().logs.map((l) => l.operation)).toEqual(['DONE', 'CLICK', 'DONE (vetoed)']);
+    expect(r.getProgress().logs.map((l) => l.operation)).toEqual(['DONE', 'CLICK', 'DONE (unverified)']);
   });
 
   it('describes outcomes in words and sends run progress in the state', async () => {
@@ -802,7 +810,7 @@ describe('links that open a new tab', () => {
     chromeMock.tabs.sendMessage.mockImplementation(async (tabId: number, msg: any) => {
       page.sent.push(msg);
       if (msg.type === 'CONTENT_OBSERVE') { observedTabs.push(tabId); return { success: true, snapshot: page.snapshot }; }
-      if (msg.type === 'CONTENT_ACT') { created.forEach((fn) => fn({ id: 9, openerTabId: 99 })); return { ok: true, via: 'synthetic' }; }
+      if (msg.type === 'CONTENT_ACT') { created.forEach((fn) => fn({ id: 9, openerTabId: 99 })); page.snapshot = snapshot({ text: 'New content appeared' }); return { ok: true, via: 'synthetic' }; }
       return { pong: true };
     });
     jev.mockResolvedValueOnce(answer('CLICK', clickTarget('1'))).mockResolvedValueOnce(answer('DONE'));
@@ -823,8 +831,15 @@ describe('trusted input (chrome.debugger)', () => {
         case 'PING': return { pong: true };
         case 'CONTENT_OBSERVE': return { success: true, snapshot: page.snapshot };
         case 'CONTENT_PREPARE': return opts.prepare ? opts.prepare(msg) : { ok: true, done: false, x: 40, y: 50 };
-        case 'CONTENT_DISPATCH': return { ok: true, via: 'synthetic' };
-        case 'CONTENT_ACT': return page.act(msg.action, msg.text);
+        case 'CONTENT_DISPATCH': page.snapshot = snapshot({ text: 'DOM updated by synthetic dispatch' }); return { ok: true, via: 'synthetic' };
+        case 'CONTENT_ACT': {
+          const result = page.act(msg.action, msg.text);
+          if (result.ok) page.snapshot = snapshot({ text: 'DOM updated by page action' });
+          return result;
+        }
+        case 'CONTENT_SETTLE':
+          page.snapshot = snapshot({ text: 'DOM updated by trusted input' });
+          return { ok: true };
         default: return { ok: true };
       }
     });

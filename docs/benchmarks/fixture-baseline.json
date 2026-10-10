@@ -1,0 +1,170 @@
+{
+  "benchmark": "lumi-hybrid-offline",
+  "kind": "deterministic-fixtures-only",
+  "tests": 22,
+  "passed": 22,
+  "failed": 0,
+  "accuracy": 1,
+  "falseDoneCount": 0,
+  "latencyMs": {
+    "p50": 0.0643,
+    "p95": 1.0199
+  },
+  "failures": [],
+  "rows": [
+    {
+      "id": "next-vi",
+      "type": "intent",
+      "pass": true,
+      "elapsedMs": 1.0199,
+      "actual": "media.next"
+    },
+    {
+      "id": "next-vi-2",
+      "type": "intent",
+      "pass": true,
+      "elapsedMs": 0.2941,
+      "actual": "media.next"
+    },
+    {
+      "id": "next-en",
+      "type": "intent",
+      "pass": true,
+      "elapsedMs": 0.1249,
+      "actual": "media.next"
+    },
+    {
+      "id": "next-on-github",
+      "type": "intent",
+      "pass": true,
+      "elapsedMs": 0.0074,
+      "actual": "none"
+    },
+    {
+      "id": "how-to-not-action",
+      "type": "intent",
+      "pass": true,
+      "elapsedMs": 0.0194,
+      "actual": "none"
+    },
+    {
+      "id": "pause",
+      "type": "intent",
+      "pass": true,
+      "elapsedMs": 0.5345,
+      "actual": "media.pause"
+    },
+    {
+      "id": "resume",
+      "type": "intent",
+      "pass": true,
+      "elapsedMs": 0.1735,
+      "actual": "media.resume"
+    },
+    {
+      "id": "goto-youtube",
+      "type": "navigation",
+      "pass": true,
+      "elapsedMs": 1.3072,
+      "actual": "www.youtube.com"
+    },
+    {
+      "id": "song-multiline",
+      "type": "navigation",
+      "pass": true,
+      "elapsedMs": 1.8598,
+      "actual": "www.youtube.com"
+    },
+    {
+      "id": "rap-song",
+      "type": "navigation",
+      "pass": true,
+      "elapsedMs": 0.6576,
+      "actual": "www.youtube.com"
+    },
+    {
+      "id": "open-docs",
+      "type": "navigation",
+      "pass": true,
+      "elapsedMs": 0.0586,
+      "actual": "example.com"
+    },
+    {
+      "id": "website-mentioned-no-command",
+      "type": "navigation",
+      "pass": true,
+      "elapsedMs": 0.006,
+      "actual": "none"
+    },
+    {
+      "id": "next-good",
+      "type": "media_verification",
+      "pass": true,
+      "elapsedMs": 0.0607,
+      "actual": true
+    },
+    {
+      "id": "next-same-id",
+      "type": "media_verification",
+      "pass": true,
+      "elapsedMs": 0.0066,
+      "actual": false
+    },
+    {
+      "id": "next-not-playing",
+      "type": "media_verification",
+      "pass": true,
+      "elapsedMs": 0.0053,
+      "actual": false
+    },
+    {
+      "id": "no-action-done",
+      "type": "done_verification",
+      "pass": true,
+      "elapsedMs": 0.0643,
+      "actual": false
+    },
+    {
+      "id": "no-change-done",
+      "type": "done_verification",
+      "pass": true,
+      "elapsedMs": 0.0413,
+      "actual": false
+    },
+    {
+      "id": "changed-done",
+      "type": "done_verification",
+      "pass": true,
+      "elapsedMs": 0.1098,
+      "actual": true
+    },
+    {
+      "id": "api-no-response",
+      "type": "done_verification",
+      "pass": true,
+      "elapsedMs": 0.1488,
+      "actual": false
+    },
+    {
+      "id": "song-title-exact",
+      "type": "title",
+      "pass": true,
+      "elapsedMs": 0.151,
+      "actual": true
+    },
+    {
+      "id": "song-title-wrong",
+      "type": "title",
+      "pass": true,
+      "elapsedMs": 0.0221,
+      "actual": false
+    },
+    {
+      "id": "song-title-partial",
+      "type": "title",
+      "pass": true,
+      "elapsedMs": 0.0113,
+      "actual": false
+    }
+  ]
+}
