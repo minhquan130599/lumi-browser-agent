@@ -83,7 +83,7 @@ export const DEFAULT_SETTINGS: AppSettings = {
   },
   maxSteps: 30,
   stepDelayMs: 75,
-  showOverlay: true,
+  showOverlay: false,
   trustedInput: true,
 };
 

@@ -20,6 +20,11 @@ const failed = (err: any): ActResult => ({ ok: false, code: 'failed', message: e
  */
 const previous = window.__jevContent;
 if (!previous || !previous.alive()) {
+  // A previous extension context may be invalidated but its rendered badges
+  // and status banner remain in the webpage. Clear them before registering a
+  // new listener, including when the user Reloads Lumi from chrome://extensions.
+  clearBadges();
+  removeStatusBanner();
   window.__jevContent = {
     alive: () => {
       try {
@@ -34,7 +39,7 @@ if (!previous || !previous.alive()) {
 }
 
 function boot(): void {
-  let showOverlay = true;
+  let showOverlay = false;
 
   try {
     chrome.storage.local.get(['jev_settings'], (result) => {
@@ -151,6 +156,9 @@ function boot(): void {
         case 'CONTENT_STATUS': {
           if (message.clear || !showOverlay) {
             removeStatusBanner();
+            // Otherwise [1], [2] badges are stranded on the webpage after
+            // the agent finishes or fails; no new observe will remove them.
+            clearBadges();
           } else if (message.text) {
             showStatusBanner(message.text, message.latencyMs);
           }

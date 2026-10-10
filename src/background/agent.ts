@@ -650,6 +650,15 @@ export class AgentRunner {
     const playbackResult = await this.verifyYoutubePlayback(tabId, snapshot, token);
     if (playbackResult !== null) return playbackResult;
 
+    // The explicit instruction to find AND play a YouTube video authorizes
+    // opening one matching visible result. Do not ask a small Jev model to
+    // re-type an already populated search box (especially when Text Helper
+    // is not configured). This action is limited to verified /watch links.
+    if (this.navigationIntent?.searchQuery && this.navigationIntent.playVideo && isYoutubeResultPage(snapshot.url)) {
+      const result = await this.openYoutubeResult(tabId, snapshot, token);
+      if (result !== null) return result;
+    }
+
     // 2. Resolve what the previous action did and detect deadlocks
     const summary = summarize(snapshot);
     const fingerprint = summary.fingerprint;
@@ -978,6 +987,19 @@ export class AgentRunner {
       return false;
     }
 
+    // A search command was already applied through YouTube's results URL.
+    // Even if Jev chooses TYPE_TEXT, do not request an unrelated cloud Text
+    // Helper key just to re-enter the same query on an already searched page.
+    if (operation === 'TYPE_TEXT' && this.navigationIntent?.searchQuery &&
+        isYoutubeResultPage(snapshot.url)) {
+      const recovery = await this.openYoutubeResult(tabId, snapshot, token);
+      if (recovery !== null) return recovery;
+      this.targetFailureCount.set(targetAction.id, 2);
+      this.lastStaleNotice = 'Search query is already in YouTube results. Do not type it again; scroll to a video or click a /watch link.';
+      this.broadcastUpdate();
+      return true;
+    }
+
     // 6. TYPE_TEXT: the helper supplies the value; reuse it only for an identical input after a stale retry
     let generatedText: string | undefined;
     if (operation === 'TYPE_TEXT') {
@@ -1184,8 +1206,11 @@ export class AgentRunner {
     } else {
       delete this.progress.lastError;
     }
+    // A finished run no longer needs numbered DOM badges or the floating
+    // status HUD. Keep errors in the Side Panel's diagnostics instead of
+    // leaving overlays stuck on the webpage after DONE / BLOCKED / ERROR.
+    this.sendStatus({ clear: true });
     this.broadcastUpdate();
-    if (status !== 'done') this.sendStatus({ text: message || status });
   }
 
   private setPhase(phase: AgentTiming['currentPhase']): void {

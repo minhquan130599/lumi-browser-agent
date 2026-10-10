@@ -33,14 +33,14 @@ export const Popup: React.FC = () => {
     maxSteps: 30,
     logs: [],
   });
-  const [showBadges, setShowBadges] = useState(true);
+  const [showBadges, setShowBadges] = useState(false);
 
   useEffect(() => {
     // 1. Get settings
     chrome.runtime.sendMessage({ type: 'GET_SETTINGS' }, (response?: { settings?: AppSettings }) => {
       if (response?.settings) {
         setSettings(response.settings);
-        setShowBadges(response.settings.showOverlay ?? true);
+        setShowBadges(response.settings.showOverlay ?? false);
       }
     });
 

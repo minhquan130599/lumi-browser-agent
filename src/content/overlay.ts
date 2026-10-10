@@ -9,6 +9,14 @@ const FONT = '-apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif'
 
 export function initOverlay(): HTMLElement {
   if (overlayContainer && overlayContainer.isConnected) return overlayContainer;
+  // Reuse the container left by a previous extension version instead of
+  // creating duplicate IDs on every Reload. Its stale children are cleaned
+  // when the new content script boots.
+  const existing = document.getElementById('__jev_overlay_container');
+  if (existing instanceof HTMLElement) {
+    overlayContainer = existing;
+    return existing;
+  }
 
   overlayContainer = document.createElement('div');
   overlayContainer.id = '__jev_overlay_container';
@@ -21,7 +29,9 @@ export function initOverlay(): HTMLElement {
 }
 
 export function clearBadges(): void {
-  overlayContainer?.querySelectorAll('.__jev_badge').forEach((b) => b.remove());
+  // Query the document, not only this module's overlayContainer reference:
+  // an extension Reload resets JS globals while old badge DOM nodes remain.
+  document.querySelectorAll('#__jev_overlay_container .__jev_badge').forEach(b => b.remove());
 }
 
 /**
@@ -134,6 +144,8 @@ export function showStatusBanner(text: string, latencyMs?: number): void {
 }
 
 export function removeStatusBanner(): void {
+  document.querySelectorAll('#__jev_overlay_container #__jev_status_banner')
+    .forEach(banner => banner.remove());
   statusBanner?.remove();
   statusBanner = null;
 }

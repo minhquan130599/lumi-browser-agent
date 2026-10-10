@@ -74,6 +74,7 @@ try {
           status: 200, contentType: 'text/html; charset=utf-8',
           body: '<!doctype html><html><head><title>Nhạc thiếu nhi - YouTube</title></head><body>' +
             '<main><h1>Nhạc Thiếu Nhi Vui Nhộn Cho Bé</h1>' +
+            '<button id="subscribe">Subscribe</button><button id="share">Share</button>' +
             '<video id="player" style="width:400px;height:220px" onclick="this.play()"></video>' +
             '<script>const c=document.createElement("canvas");c.width=160;c.height=90;' +
             'const ctx=c.getContext("2d");let n=0;setInterval(()=>{ctx.fillStyle=n++%2?"red":"blue";ctx.fillRect(0,0,160,90)},100);' +
@@ -95,7 +96,7 @@ try {
           endpoint: 'http://127.0.0.1:' + portNumber + '/v1/systemone',
           model: 'mock-blocked', apiKey: '',
         },
-        maxSteps: 10, stepDelayMs: 0, showOverlay: false, trustedInput: true,
+        maxSteps: 10, stepDelayMs: 0, showOverlay: true, trustedInput: true,
       } });
     }, port);
 
@@ -111,12 +112,17 @@ try {
     if (!startup?.success) throw new Error('Agent did not start: ' + JSON.stringify(startup));
     const start = Date.now();
     let progress: any;
+    let observedBadges = 0;
     for (let i = 0; i < 120; i++) {
       await new Promise(resolve => setTimeout(resolve, 100));
       progress = await extension.evaluate(async () =>
         (await chrome.runtime.sendMessage({ type: 'GET_PROGRESS' }))?.progress);
+      observedBadges = Math.max(observedBadges, await page.locator('.__jev_badge').count());
       if (progress && !['running', 'paused'].includes(progress.status)) break;
     }
+    // The finish() cleanup message is asynchronous; wait for it before
+    // inspecting whether the completed run left numbered badges behind.
+    await page.locator('.__jev_badge').first().waitFor({ state: 'detached', timeout: 2500 });
     console.log(JSON.stringify({
       status: progress?.status,
       steps: progress?.currentStep,
@@ -124,12 +130,37 @@ try {
       url: page.url(),
       playing: page.url().includes('/watch') ? await page.evaluate(() => !document.querySelector('video')?.paused) : null,
       operations: (progress?.logs || []).map((l: any) => l.operation).reverse(),
+      peakBadges: observedBadges,
+      remainingBadges: await page.locator('.__jev_badge').count(),
       error: progress?.lastError,
     }));
     if (progress?.status !== 'done' ||
         !page.url().startsWith('https://www.youtube.com/watch?v=kids123') ||
-        !(await page.evaluate(() => !document.querySelector('video')?.paused))) {
+        !(await page.evaluate(() => !document.querySelector('video')?.paused)) ||
+        (await page.locator('.__jev_badge').count()) !== 0) {
       throw new Error('YouTube navigation/search/playback smoke test failed');
+    }
+
+    // Badge overlay regression: render numbered controls, disable overlay via
+    // the same message as Side Panel and verify it clears immediately AND
+    // remains disabled for subsequent observations (no reload required).
+    const observation = await extension.evaluate(async target =>
+      chrome.tabs.sendMessage(target, { type: 'CONTENT_OBSERVE' }), tabId);
+    if (!observation?.success) throw new Error('Could not render badge test controls');
+    const before = await page.locator('.__jev_badge').count();
+    const toggle = await extension.evaluate(async target =>
+      chrome.runtime.sendMessage({ type: 'TOGGLE_OVERLAY', show: false, tabId: target }), tabId);
+    const after = await page.locator('.__jev_badge').count();
+    await extension.evaluate(async target =>
+      chrome.tabs.sendMessage(target, { type: 'CONTENT_OBSERVE' }), tabId);
+    const afterRepeat = await page.locator('.__jev_badge').count();
+    const persisted = await extension.evaluate(async () =>
+      (await chrome.runtime.sendMessage({ type: 'GET_SETTINGS' })).settings.showOverlay);
+    console.log(JSON.stringify({ badgeOverlayTest: {
+      before, after, afterRepeat, persisted, toggleSuccess: toggle?.success,
+    } }));
+    if (before < 1 || after !== 0 || afterRepeat !== 0 || persisted !== false || !toggle?.success) {
+      throw new Error('Jev badge overlay toggle smoke test failed');
     }
   } finally { await context.close(); }
 } finally {

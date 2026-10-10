@@ -77,6 +77,7 @@ function App() {
   const [settings, setSettings] = useState(false);
   const [error, setError] = useState('');
   const [traceCopied, setTraceCopied] = useState(false);
+  const [showBadges, setShowBadges] = useState<boolean | null>(null);
   const pending = useRef<AbortController | null>(null);
 
   useEffect(() => {
@@ -88,6 +89,20 @@ function App() {
     chrome.runtime.sendMessage({ type: 'GET_PROGRESS' }).then(response => {
       if (response?.progress) setProgress(response.progress);
     }).catch(() => undefined);
+
+    chrome.runtime.sendMessage({ type: 'GET_SETTINGS' }).then(response => {
+      const visible = response?.settings?.showOverlay;
+      if (typeof visible === 'boolean') setShowBadges(visible);
+    }).catch(() => undefined);
+
+    // Keep the quick toggle synchronized with changes made in Options or the
+    // legacy popup. A hidden overlay remains hidden during subsequent runs.
+    const onStorageChanged = (changes: { jev_settings?: chrome.storage.StorageChange }, area: string) => {
+      if (area !== 'local') return;
+      const update = changes.jev_settings?.newValue as { showOverlay?: unknown } | undefined;
+      if (typeof update?.showOverlay === 'boolean') setShowBadges(update.showOverlay);
+    };
+    chrome.storage.onChanged.addListener(onStorageChanged);
 
     const onMessage = (message: { type: string; progress?: Progress }) => {
       if (message.type === 'PROGRESS_UPDATE' && message.progress) {
@@ -108,10 +123,23 @@ function App() {
     return () => {
       pending.current?.abort();
       chrome.runtime.onMessage.removeListener(onMessage);
+      chrome.storage.onChanged.removeListener(onStorageChanged);
       chrome.tabs.onActivated.removeListener(refresh);
       chrome.tabs.onUpdated.removeListener(refresh);
     };
   }, []);
+
+  const toggleBadges = async () => {
+    if (showBadges === null) return;
+    const next = !showBadges;
+    try {
+      const result = await chrome.runtime.sendMessage({ type: 'TOGGLE_OVERLAY', show: next });
+      if (!result?.success) throw new Error(result?.error || 'Không đổi được chế độ hiển thị.');
+      setShowBadges(next);
+    } catch (reason) {
+      setError('Không thể ẩn/hiện số Jev: ' + String(reason));
+    }
+  };
 
   const updateConfig = (value: AIConfig) => {
     setConfig(value);
@@ -278,6 +306,17 @@ function App() {
             </div>
             <span className="signal">●</span>
           </div>
+
+          {mode === 'agent' && (
+            <div className="agent-badges-toolbar">
+              <span>Hiển thị phần tử trên trang</span>
+              <button type="button" disabled={showBadges === null}
+                title="Ẩn/hiện các số tím Jev mà không tắt khả năng đọc DOM"
+                onClick={() => void toggleBadges()}>
+                {showBadges === null ? 'Đang tải...' : showBadges ? 'Ẩn số Jev' : 'Hiện số Jev'}
+              </button>
+            </div>
+          )}
 
           <section className="conversation">
             {messages.length === 0 ? (

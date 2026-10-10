@@ -150,7 +150,7 @@ describe('AgentRunner', () => {
     expect(jev).not.toHaveBeenCalled();
   });
 
-  it('opens YouTube search, recovers from two false BLOCKED decisions, and verifies playback', async () => {
+  it('opens a YouTube music video without redundant TYPE_TEXT or an API key', async () => {
     const chromeMock = installChrome(page);
     let currentUrl = 'https://www.google.com/search?q=ollama';
     let playing = false;
@@ -211,7 +211,8 @@ describe('AgentRunner', () => {
     expect(r.getProgress().logs.map(entry => entry.operation)).toContain('PLAY_VIDEO');
     expect(r.getProgress().logs[0].operation).toBe('VERIFY_PLAYING');
     expect(chromeMock.tabs.sendMessage).toHaveBeenCalledWith(7, { type: 'CONTENT_MEDIA_PLAY' });
-    expect(jev).toHaveBeenCalledTimes(2);
+    expect(jev).not.toHaveBeenCalled();
+    expect(textHelper).not.toHaveBeenCalled();
   });
 
   it('does not claim completion when the YouTube player refuses playback', async () => {
@@ -250,6 +251,7 @@ describe('AgentRunner', () => {
     expect(progress.currentStep).toBe(0);
     expect(progress.logs[0].operation).toBe('DONE');
     expect(page.sent.filter((m) => m.type === 'CONTENT_ACT')).toHaveLength(0);
+    expect(page.sent).toContainEqual({ type: 'CONTENT_STATUS', clear: true });
   });
 
   it('reviews a premature first-step BLOCKED when interactive controls are visible', async () => {
